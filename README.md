@@ -10,5 +10,5 @@ We use a monorepo structure to keep the physics bindings and agent training coup
 *   **Package Manager:** Conda
 
 ## Repository Structure
-*   `/systems`: Owns the physics baseline, CAD imports, physics engine definitions, and low-level bindings.
-*   `/research`: Owns the algorithmic baseline, SAC implementations, reward shaping, and training loops.
+*   `/pipeline`: CAD to sim pipeline, physics engine definitions, and low-level bindings.
+*   `/policy`: SAC implementations, reward shaping, and training loops.
