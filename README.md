@@ -12,3 +12,8 @@ We use a monorepo structure to keep the physics bindings and agent training coup
 ## Repository Structure
 *   `/pipeline`: CAD to sim pipeline, physics engine definitions, and low-level bindings.
 *   `/policy`: SAC implementations, reward shaping, and training loops.
+
+## Environment setup
+
+make a venv then
+`pip install -r requirements.txt` (no conda)
