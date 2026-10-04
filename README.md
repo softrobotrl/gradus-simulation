@@ -15,5 +15,19 @@ We use a monorepo structure to keep the physics bindings and agent training coup
 
 ## Environment setup
 
-make a venv then
-`pip install -r requirements.txt` (no conda)
+With Conda installed, run the command for your platform from the repository root.
+
+**macOS:**
+```bash
+conda env create -f environment-macos.yml
+```
+
+**Linux / Windows with an NVIDIA GPU (CUDA):**
+```bash
+conda env create -f environment.yml
+```
+
+Then activate the environment:
+```bash
+conda activate gradus-rl
+```
