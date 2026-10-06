@@ -1,19 +1,18 @@
 name: gradus-rl
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
   - python=3.11
-  - pytorch
-  - torchvision
-  - torchaudio
-  - pytorch-cuda=12.4
   - numpy
   - pip
   - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu126
+    - "torch>=2.8.0"
+    - torchvision
+    - torchaudio
     - genesis-world
     - gymnasium
     - tensorboard
     - matplotlib
+    - "rsl-rl-lib>=5.0.0"
