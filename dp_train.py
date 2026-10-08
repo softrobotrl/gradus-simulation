@@ -22,20 +22,20 @@ ENV_CFG = dict(
     cart_joint="cart",
     joint1="shoulder_continuous",
     joint2="elbow_continuous",
-    start="upright",       # "upright" first; then "mixed" (curriculum) -> "random"
+    start="mixed",       # "upright" first; then "mixed" (curriculum) -> "random"
     episode_s=15.0,        # episode length in seconds; steps = episode_s / dt
 )
 
 # Config tuned for large env counts (~16k parallel environments)
 TRAIN_CFG = {
-    "num_steps_per_env": 24,
+    "num_steps_per_env": 128,
     "save_interval": 100,
     "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
     "algorithm": {
         "class_name": "PPO",
-        "learning_rate": 5e-4,          # Lowered slightly for massive aggregate batch size
+        "learning_rate": 1e-3,          # Lowered slightly for massive aggregate batch size
         "num_learning_epochs": 5,
-        "num_mini_batches": 8,          # Increased from 4 to keep mini-batch sizes reasonable (~49k)
+        "num_mini_batches": 32,          # Increased from 4 to keep mini-batch sizes reasonable (~49k)
         "schedule": "adaptive",
         "desired_kl": 0.01,
         "clip_param": 0.2,
@@ -60,7 +60,7 @@ TRAIN_CFG = {
         "obs_normalization": True,
     },
 }
-MAX_ITERATIONS = 1000  # total iterations to reach
+MAX_ITERATIONS = 10000  # total iterations to reach
 
 
 def latest_ckpt(log_dir):
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     ap.add_argument("--eval", action="store_true")
     ap.add_argument("--resume", action="store_true", help="continue training from a checkpoint")
     ap.add_argument("--ckpt", type=int, default=-1, help="-1 = latest saved checkpoint")
-    ap.add_argument("-n", "--num_envs", type=int, default=16384, help="default scaled to 16k envs")
+    ap.add_argument("-n", "--num_envs", type=int, default=4096, help="default scaled to 16k envs")
     ap.add_argument("--view", action="store_true", help="show viewer (env 0) while training")
     args = ap.parse_args()
 

@@ -33,7 +33,8 @@ scene = gs.Scene(
 )
 robot = scene.add_entity(gs.morphs.URDF(file=args.urdf, fixed=True))
 scene.build()
-
+for l in robot.links:
+    print(l.name, l.get_mass())
 
 def dof(name):
     j = robot.get_joint(name)

@@ -1,5 +1,5 @@
 {
-    "documentId": "0abfcee1dd6faf68fc67652f",
-    "outputFormat": "urdf",
-    "assemblyName": "export"
-  }
+  "document_id": "0abfcee1dd6faf68fc67652f",
+  "output_format": "urdf",
+  "assembly_name": "export"
+}

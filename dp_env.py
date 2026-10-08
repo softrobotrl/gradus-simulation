@@ -35,17 +35,16 @@ DEFAULT_CFG = dict(
 )
 
 DEFAULT_REWARD_SCALES = dict(
-    height=1.0,        # tip height, dense signal everywhere (drives swing-up)
-    upright=2.0,       # sharp bonus when BOTH links are close to vertical
-    cart_pos=0.3,      # stay near rail center
-    cart_edge=1.0,     # ramp-up penalty in the last 30% of the rail
-    cart_vel=0.02,     # don't race around
-    ang_vel=0.01,      # calm the links, but only near upright (gated)
-    action_rate=0.05,  # smooth control
-    action=0.01,       # small effort penalty
-    termination=10.0,  # hitting the rail end
+    height=2.0,        # Increased tip height signal
+    upright=5.0,       # Stronger peak when balanced
+    cart_pos=0.5,      # Stronger centering force
+    cart_edge=2.0,     # Penalize getting close to limits
+    cart_vel=0.05,     
+    ang_vel=0.005,     # Small un-gated damping penalty to discourage endless spinning
+    action_rate=0.01,  
+    action=0.005,      
+    termination=5.0,  
 )
-
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -81,8 +80,10 @@ def compute_reward(q, qd, actions, last_actions, fail, x_limit, up, scales, link
     # normalized tip height in [-1, 1]; +1 = both links straight up
     h = (l1 * torch.cos(e1) + l2 * torch.cos(e2)) / (l1 + l2)
 
-    height = 0.5 * (h + 1.0)                                  # 0..1
-    upright = torch.exp(-(e1 ** 2 + e2 ** 2) / 0.18)          # 0..1, ~e^-1 at 0.3 rad each
+    height = h  
+
+    # Continuous exponential bonus for both angles being upright
+    upright = torch.exp(- (e1.pow(2) + e2.pow(2)) / 0.1)
     gate = upright                                            # "close to upright" weight
 
     xn = q[:, 0] / x_limit

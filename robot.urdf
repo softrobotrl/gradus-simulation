@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <!-- Generated using onshape-to-robot -->
 <!-- Onshape document_id: 0abfcee1dd6faf68fc67652f -->
-<robot name="C:\Users\daniel\Downloads\gradus-simulation">
+<robot name="gradus-simulation">
   <!-- Link beam_1 -->
   <link name="beam_1">
     <inertial>
@@ -13,7 +13,7 @@
     <visual>
       <origin xyz="-0.091068 -0.106204 0.0772103" rpy="1.5708 9.2e-11 1.5708"/>
       <geometry>
-        <mesh filename="package://assets\beam_1.stl"/>
+        <mesh filename="package://assets/beam_1.stl"/>
       </geometry>
       <material name="beam_1_material">
         <color rgba="0.627451 0.627451 0.627451 1"/>
@@ -22,14 +22,14 @@
     <collision>
       <origin xyz="-0.091068 -0.106204 0.0772103" rpy="1.5708 9.2e-11 1.5708"/>
       <geometry>
-        <mesh filename="package://assets\beam_1.stl"/>
+        <mesh filename="package://assets/beam_1.stl"/>
       </geometry>
     </collision>
     <!-- Part beam_1_2 -->
     <visual>
       <origin xyz="-0.391068 -0.106204 0.0772103" rpy="1.5708 9.2e-11 1.5708"/>
       <geometry>
-        <mesh filename="package://assets\beam_1.stl"/>
+        <mesh filename="package://assets/beam_1.stl"/>
       </geometry>
       <material name="beam_1_2_material">
         <color rgba="0.627451 0.627451 0.627451 1"/>
@@ -38,7 +38,7 @@
     <collision>
       <origin xyz="-0.391068 -0.106204 0.0772103" rpy="1.5708 9.2e-11 1.5708"/>
       <geometry>
-        <mesh filename="package://assets\beam_1.stl"/>
+        <mesh filename="package://assets/beam_1.stl"/>
       </geometry>
     </collision>
   </link>
@@ -53,7 +53,7 @@
     <visual>
       <origin xyz="0.00851512 0.004 -0" rpy="-1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\holder.stl"/>
+        <mesh filename="package://assets/holder.stl"/>
       </geometry>
       <material name="holder_material">
         <color rgba="0.615686 0.811765 0.929412 1"/>
@@ -62,14 +62,14 @@
     <collision>
       <origin xyz="0.00851512 0.004 -0" rpy="-1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\holder.stl"/>
+        <mesh filename="package://assets/holder.stl"/>
       </geometry>
     </collision>
     <!-- Part base -->
     <visual>
       <origin xyz="-0.00301312 -0 -0" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\base.stl"/>
+        <mesh filename="package://assets/base.stl"/>
       </geometry>
       <material name="base_material">
         <color rgba="0.615686 0.811765 0.929412 1"/>
@@ -78,14 +78,14 @@
     <collision>
       <origin xyz="-0.00301312 -0 -0" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\base.stl"/>
+        <mesh filename="package://assets/base.stl"/>
       </geometry>
     </collision>
     <!-- Part shoulder -->
     <visual>
       <origin xyz="-0.00301312 0 -0" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\shoulder.stl"/>
+        <mesh filename="package://assets/shoulder.stl"/>
       </geometry>
       <material name="shoulder_material">
         <color rgba="0.615686 0.811765 0.929412 1"/>
@@ -94,7 +94,7 @@
     <collision>
       <origin xyz="-0.00301312 0 -0" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets\shoulder.stl"/>
+        <mesh filename="package://assets/shoulder.stl"/>
       </geometry>
     </collision>
   </link>
@@ -103,22 +103,22 @@
     <inertial>
       <origin xyz="0 -0.0885241 -0.00286629" rpy="0 0 0"/>
       <mass value="0.110373"/>
-      <inertia ixx="0.00041845" ixy="0" ixz="0" iyy="9.8519e-06" iyz="8.89379e-06" izz="0.00042537"/>
+      <inertia ixx="0.00041845" ixy="0" ixz="-0" iyy="9.8519e-06" iyz="8.89379e-06" izz="0.00042537"/>
     </inertial>
     <!-- Part arm_1 -->
     <visual>
-      <origin xyz="0 -0.16 -0.008" rpy="0 -0 0"/>
+      <origin xyz="0 -0.16 -0.008" rpy="-0 -0 0"/>
       <geometry>
-        <mesh filename="package://assets\arm_1.stl"/>
+        <mesh filename="package://assets/arm_1.stl"/>
       </geometry>
       <material name="arm_1_material">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0 -0.16 -0.008" rpy="0 -0 0"/>
+      <origin xyz="0 -0.16 -0.008" rpy="-0 -0 0"/>
       <geometry>
-        <mesh filename="package://assets\arm_1.stl"/>
+        <mesh filename="package://assets/arm_1.stl"/>
       </geometry>
     </collision>
   </link>
@@ -131,18 +131,18 @@
     </inertial>
     <!-- Part arm_2 -->
     <visual>
-      <origin xyz="-0.0491911 -0.1325 -0.008" rpy="0 -0 0"/>
+      <origin xyz="-0.0491911 -0.1325 -0.008" rpy="0 -0 -0"/>
       <geometry>
-        <mesh filename="package://assets\arm_2.stl"/>
+        <mesh filename="package://assets/arm_2.stl"/>
       </geometry>
       <material name="arm_2_material">
         <color rgba="0.647059 0.647059 0.647059 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0491911 -0.1325 -0.008" rpy="0 -0 0"/>
+      <origin xyz="-0.0491911 -0.1325 -0.008" rpy="0 -0 -0"/>
       <geometry>
-        <mesh filename="package://assets\arm_2.stl"/>
+        <mesh filename="package://assets/arm_2.stl"/>
       </geometry>
     </collision>
   </link>
