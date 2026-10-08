@@ -24,28 +24,23 @@ DEFAULT_CFG = dict(
     decimation=2,           # physics steps per policy step -> control at 50 Hz
     x_limit=None,           # None -> derived from the URDF slider limits
     x_margin=0.02,          # episode ends this far (m) before the physical stop
-    max_force=None,         # None -> URDF effort limit of the cart joint
+    max_force=1,         # None -> URDF effort limit of the cart joint
     episode_s=10.0,
     down_at_zero=True,      # True if shoulder = 0 means hanging straight down in your CAD
     start="upright",        # "upright" (balance) | "mixed" (curriculum) | "down" | "random"
-    init_noise=0.05,
+    init_noise=0.02,
     joint_damping=None,     # e.g. 0.0 to override damping coming from the URDF
     link_lengths=(1.0, 1.0),  # only the ratio matters (used for the tip-height term)
     reward_scales=None,     # partial overrides of DEFAULT_REWARD_SCALES
 )
 
 DEFAULT_REWARD_SCALES = dict(
-    height=2.0,        # Increased tip height signal
-    upright=5.0,       # Stronger peak when balanced
-    cart_pos=0.5,      # Stronger centering force
-    cart_edge=2.0,     # Penalize getting close to limits
-    cart_vel=0.05,     
-    ang_vel=0.005,     # Small un-gated damping penalty to discourage endless spinning
-    action_rate=0.01,  
-    action=0.005,      
-    termination=5.0,  
+    energy=1.0,        # Dense Lyapunov-like signal for swing-up
+    upright=4.0,       # Sharp bonus for precise balancing
+    cart_pos=0.1,      # Gentle centering
+    action_rate=0.01,  # Smooth control
+    action=0.005,      # Small effort penalty
 )
-
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -53,56 +48,57 @@ def wrap_angle(x):
     """Wrap to [-pi, pi]."""
     return torch.atan2(torch.sin(x), torch.cos(x))
 
-
 def compute_reward(q, qd, actions, last_actions, fail, x_limit, up, scales, link_lengths):
-    """Reward for balancing / swinging up a double pendulum on a cart.
-
-    q, qd:        (N, 3) [cart, shoulder, elbow] positions / velocities
-    actions:      (N, 1) current action in [-1, 1];  last_actions: previous action
-    fail:         (N,) bool, True if the cart hit the rail end this step
-    up:           shoulder angle at which the pendulum points straight up
-    Returns (reward (N,), dict of weighted per-term tensors for logging).
+    """
+    Dense, Lyapunov-inspired reward for rapid swing-up learning.
 
     Design:
-      * height     dense shaped term, tells the policy "higher tip is better" from any state.
-      * upright    exp(-err^2) bonus, gives a sharp peak at the balanced pose so the policy
-                   settles at the top instead of hovering near it.
-      * ang_vel    penalized only near upright (gate), so fast swings are free during
-                   swing-up but the policy must calm down once it arrives.
-      * cart terms keep the cart centered and away from the rail ends.
-      * action terms keep the control smooth.
+      - Primary term: "energy" of the pendulum system, which is lowest at upright.
+      - Guidance terms: penalize cart offset and control effort to encourage efficient, stable motions.
     """
     l1, l2 = link_lengths
-    # deviations from upright for the absolute angle of each link (wrapped)
+    m1 = m2 = 1.0  # Assume unit masses for the energy proxy; only ratios matter.
+
+    # Angles relative to upright
     e1 = wrap_angle(q[:, 1] - up)
     e2 = wrap_angle(q[:, 1] + q[:, 2] - up)
 
-    # normalized tip height in [-1, 1]; +1 = both links straight up
-    h = (l1 * torch.cos(e1) + l2 * torch.cos(e2)) / (l1 + l2)
+    # ---- 1. Lyapunov-like energy term ----
+    # Potential energy (normalized): lowest (most negative) when both links point up.
+    # Kinetic energy (normalized): lowest (zero) at rest.
+    potential = -(l1 * torch.cos(e1) + l2 * torch.cos(e2)) / (l1 + l2)  # in [-1, 1]
+    kinetic = 0.5 * (m1 * (l1 * qd[:, 1])**2 + m2 * (l2 * (qd[:, 1] + qd[:, 2]))**2) / (m1 * l1**2 + m2 * l2**2)
 
-    height = h  
+    # The energy term is low (reward is high) only when potential is low AND kinetic is low.
+    energy_reward = 1.0 - 0.5 * (potential**2 + kinetic**2)  # in [0, 1]
 
-    # Continuous exponential bonus for both angles being upright
-    upright = torch.exp(- (e1.pow(2) + e2.pow(2)) / 0.1)
-    gate = upright                                            # "close to upright" weight
+    # ---- 2. Upright bonus (sharp, gated) ----
+    # This gives a strong pull to settle *exactly* at the top.
+    angle_error_sq = e1.pow(2) + e2.pow(2)
+    upright_bonus = torch.exp(-angle_error_sq / 0.05)
 
-    xn = q[:, 0] / x_limit
-    edge = torch.clamp((xn.abs() - 0.7) / 0.3, 0.0, 1.0)
+    # ---- 3. Cart centering ----
+    x_normalized = q[:, 0] / x_limit
+    cart_center_penalty = -x_normalized.pow(2)
 
-    terms = dict(
-        height=scales["height"] * height,
-        upright=scales["upright"] * upright,
-        cart_pos=-scales["cart_pos"] * xn ** 2,
-        cart_edge=-scales["cart_edge"] * edge ** 2,
-        cart_vel=-scales["cart_vel"] * qd[:, 0] ** 2,
-        ang_vel=-scales["ang_vel"] * gate * (qd[:, 1] ** 2 + qd[:, 2] ** 2),
-        action_rate=-scales["action_rate"] * (actions[:, 0] - last_actions[:, 0]) ** 2,
-        action=-scales["action"] * actions[:, 0] ** 2,
-        termination=-scales["termination"] * fail.float(),
-    )
-    rew = sum(terms.values())
-    return rew, terms
+    # ---- 4. Control effort ----
+    action_magnitude_penalty = -actions[:, 0].pow(2)
+    action_rate_penalty = -(actions[:, 0] - last_actions[:, 0]).pow(2)
 
+    # ---- 5. Termination ----
+    termination_penalty = -fail.float() * 10.0
+
+    # ---- Weighted sum ----
+    terms = {
+        "energy": scales["energy"] * energy_reward,
+        "upright_bonus": scales["upright"] * upright_bonus,
+        "cart_center": scales["cart_pos"] * cart_center_penalty,
+        "action_mag": scales["action"] * action_magnitude_penalty,
+        "action_rate": scales["action_rate"] * action_rate_penalty,
+        "termination": termination_penalty,
+    }
+    reward = sum(terms.values())
+    return reward, terms
 
 def _urdf_joint_info(path, joint_name):
     """Return (lower, upper, effort) for a joint from the URDF, or None."""
@@ -163,7 +159,7 @@ class DoublePendulumCartEnv:
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=c["sim_dt"], substeps=c["substeps"]),
             viewer_options=gs.options.ViewerOptions(
-                camera_pos=(3.0, -2.0, 1.5), camera_lookat=(0.0, 0.0, 0.8), refresh_rate=60
+                camera_pos=(0.85, -1.55, 0.7), camera_lookat=(0.0, 0.0, 0.3), refresh_rate=60
             ),
             rigid_options=gs.options.RigidOptions(enable_self_collision=False),
             vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
@@ -219,28 +215,43 @@ class DoublePendulumCartEnv:
         noise = lambda s: (torch.rand(n, device=self.device) * 2 - 1) * s
         q = torch.zeros(n, 3, device=self.device)
         q[:, 0] = noise(0.3 * self.x_limit)
+
+        down = self.up + math.pi              # shoulder angle when hanging straight down
+        near_top_scale = 0.10                 # tight noise around upright (was 0.3)
+
         mode = c["start"]
         if mode == "upright":
             q[:, 1] = self.up + noise(c["init_noise"])
             q[:, 2] = noise(c["init_noise"])
         elif mode == "mixed":
-            # curriculum: half the envs start near upright (wide noise), half start anywhere
+            # 50/50 split: half near upright (small noise), half anywhere in a full swing
+            # around the DOWN position. Explicitly anchoring the far branch to `down`
+            # guarantees it can never land on the upright pose.
             near = torch.rand(n, device=self.device) < 0.5
-            q[:, 1] = torch.where(near, self.up + noise(0.3), noise(math.pi))
-            q[:, 2] = torch.where(near, noise(0.3), noise(1.0))
+            q[:, 1] = torch.where(
+                near,
+                self.up + noise(near_top_scale),
+                down + noise(math.pi),
+            )
+            q[:, 2] = torch.where(
+                near,
+                noise(near_top_scale),
+                noise(math.pi),
+            )
         elif mode == "down":
-            q[:, 1] = (self.up + math.pi) + noise(c["init_noise"])
+            q[:, 1] = down + noise(c["init_noise"])
             q[:, 2] = noise(c["init_noise"])
         else:  # random
             q[:, 1] = noise(math.pi)
             q[:, 2] = noise(1.0)
+
         self.robot.set_dofs_position(
             position=q, dofs_idx_local=self.dofs, zero_velocity=True, envs_idx=idx
         )
         self.episode_length_buf[idx] = 0
         self.actions[idx] = 0.0
         self.last_actions[idx] = 0.0
-
+        
     def step(self, actions):
         self.last_actions = self.actions.clone()
         self.actions = torch.clip(actions, -1.0, 1.0)

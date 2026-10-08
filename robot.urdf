@@ -168,6 +168,6 @@
     <parent link="beam_1"/>
     <child link="holder"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-0.28" upper="0.35"/>
+    <limit effort="10" velocity="10" lower="-0.38" upper="0.45"/>
   </joint>
 </robot>

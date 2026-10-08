@@ -23,18 +23,18 @@ ENV_CFG = dict(
     joint1="shoulder_continuous",
     joint2="elbow_continuous",
     start="mixed",       # "upright" first; then "mixed" (curriculum) -> "random"
-    episode_s=15.0,        # episode length in seconds; steps = episode_s / dt
+    episode_s=10.0,        # episode length in seconds; steps = episode_s / dt
 )
 
 # Config tuned for large env counts (~16k parallel environments)
 TRAIN_CFG = {
-    "num_steps_per_env": 128,
+    "num_steps_per_env": 64,
     "save_interval": 100,
     "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
     "algorithm": {
         "class_name": "PPO",
-        "learning_rate": 1e-3,          # Lowered slightly for massive aggregate batch size
-        "num_learning_epochs": 5,
+        "learning_rate": 3e-4,          # Lowered slightly for massive aggregate batch size
+        "num_learning_epochs": 3,
         "num_mini_batches": 32,          # Increased from 4 to keep mini-batch sizes reasonable (~49k)
         "schedule": "adaptive",
         "desired_kl": 0.01,
@@ -48,14 +48,14 @@ TRAIN_CFG = {
     },
     "actor": {
         "class_name": "MLPModel",
-        "hidden_dims": [128, 128, 64],
+        "hidden_dims": [256, 128],
         "activation": "elu",
         "obs_normalization": True,
         "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 1.0},
     },
     "critic": {
         "class_name": "MLPModel",
-        "hidden_dims": [128, 128, 64],
+        "hidden_dims": [256, 128],
         "activation": "elu",
         "obs_normalization": True,
     },
@@ -74,11 +74,11 @@ if __name__ == "__main__":
     ap.add_argument("--eval", action="store_true")
     ap.add_argument("--resume", action="store_true", help="continue training from a checkpoint")
     ap.add_argument("--ckpt", type=int, default=-1, help="-1 = latest saved checkpoint")
-    ap.add_argument("-n", "--num_envs", type=int, default=4096, help="default scaled to 16k envs")
+    ap.add_argument("-n", "--num_envs", type=int, default=8192, help="default scaled to 16k envs")
     ap.add_argument("--view", action="store_true", help="show viewer (env 0) while training")
     args = ap.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level="warning")
+    gs.init(backend=gs.gpu, logging_level="warning", performance_mode=True)
     log_dir = "logs/dp_cart"
     os.makedirs(log_dir, exist_ok=True)
 
