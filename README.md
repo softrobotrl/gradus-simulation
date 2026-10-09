@@ -5,7 +5,7 @@ This repository contains the simulation environment and reinforcement learning c
 ## Architecture & Stack
 We use a monorepo structure to keep the physics bindings and agent training coupled.
 
-*   **Physics/Sim:** Genesis
+*   **Physics/Sim:** MuJoCo MJX
 *   **Control/ML:** PyTorch, Soft Actor-Critic (SAC)
 *   **Package Manager:** Conda
 
