@@ -1,9 +1,9 @@
-"""Minimal training example: evolution strategies (ES) on a linear policy, pure JAX, no RL library.
+"""Minimal JAX training example: evolution strategies (ES) on a linear policy, no RL library.
 
 Shows how to batch the env with vmap and roll out with lax.scan. Not a recipe for good policies;
 swap in PPO (Brax / MuJoCo Playground / rsl-rl) for real training on GPU.
 
-Usage: python -m pipeline.train_example pipeline/configs/opencr_tdcr_spatial.yaml --generations 50
+Usage: python -m pipeline.examples.train_jax pipeline/configs/opencr_tdcr_spatial.yaml --generations 50
 """
 
 import argparse

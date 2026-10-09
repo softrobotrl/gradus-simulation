@@ -2,7 +2,7 @@
 
 Turns the hardware team's STL parts into a simulated robot whose tendons are pulled by servos. It runs in MJX, the version of MuJoCo that runs thousands of simulations in parallel on a GPU. The objective is to have a trainable environment within 30 minutes of receiving STL files from the hardware team.
 
-The pipeline has two stages: STL to XML (builds the MuJoCo robot description) and XML to sim env (wraps it in a trainable environment and checks it works). `build.py` runs both with one command. `train_example.py` is a minimal example of training a policy on the result (see [Example training](#example-training)).
+The pipeline has two stages: STL to XML (builds the MuJoCo robot description) and XML to sim env (wraps it in a trainable environment and checks it works). `build.py` runs both with one command. `examples/` has two minimal training scripts for the result, one in PyTorch and one in JAX (see [Example training](#example-training)).
 
 ## Quick start
 
@@ -88,13 +88,21 @@ python -m mujoco.viewer --mjcf=pipeline/build/opencr_tdcr_spatial/robot.xml
 
 ## Example training
 
-`train_example.py` is about 50 lines of JAX. It uses evolution strategies, a simple trial-and-error method, to tune a linear policy. It shows how to run many episodes in parallel, not how to train well; for real training use a standard RL algorithm such as PPO on a GPU.
+Two minimal scripts in `examples/`, one per framework. Neither is tuned; they show how to plug a trainer in.
+
+`train_pytorch.py` trains with PPO from rsl-rl on `TendonLegEnv`, using the same setup as `go2_train.py`. Start here if you use PyTorch. Logs and checkpoints go to `logs/<exp-name>/`; watch them with `tensorboard --logdir logs`.
 
 ```bash
-python -m pipeline.train_example pipeline/configs/opencr_tdcr_spatial.yaml --generations 50
+python -m pipeline.examples.train_pytorch pipeline/configs/opencr_tdcr_spatial.yaml --iterations 100
 ```
 
-On the OpenCR robot the backbone holds the chain upright by itself, so the example task (stand upright) is already solved before training. Expect rewards near 1.0 from the start.
+`train_jax.py` is about 50 lines of pure JAX on `JAXTendonLegEnv`. It uses evolution strategies, a simple trial-and-error method, to tune a linear policy.
+
+```bash
+python -m pipeline.examples.train_jax pipeline/configs/opencr_tdcr_spatial.yaml --generations 50
+```
+
+The example task is to stand upright. On the OpenCR robot the backbone already does that by itself, so doing nothing scores about 1.0. Early policies pull tendons at random and score lower (about 0.65), so rewards should climb toward 1.0 as training learns to leave the chain alone.
 
 ## What the hardware team delivers for the real leg
 
