@@ -1,0 +1,52 @@
+# OpenCR LOTR TDCR-spatial, used as a stand-in until the Gradus leg CAD exists.
+# Source: https://github.com/ContinuumRoboticsLab/OpenCR-Hardware/tree/main/mechanics/LOTR_TDCR-spatial
+# Every value marked ASSUMED is not given by the source and should be replaced by the hardware team.
+name: opencr_tdcr_spatial
+stl_dir: ../assets/opencr_tdcr_spatial
+units: auto  # STLs are in mm; detected automatically
+
+chain:
+  disks:  # bottom (fixed) to top, per the assembly instructions (step 7)
+    - {stl: FSD_20mm_bearing_withoutDent.stl}
+    - {stl: FSD_20mm_bearing.stl, repeat: 10}
+    - {stl: FSDzero_20mm.stl}
+  spacing: 0.010             # ASSUMED: README says "equidistant"; ~10 mm estimated from images/LOTR_TDCR-spatial.jpg
+  base_height: 0.0
+  density: 1240.0            # PLA
+  extra_mass_per_disk: 0.002 # ASSUMED: McMaster 57155K438 bearing mass
+  joint:
+    type: ball
+    stiffness: null          # derived from the backbone: EI / spacing
+    damping: 0.005           # ASSUMED; sets how fast the chain stops swaying
+    armature: 1.0e-6
+    range_deg: 30.0          # ASSUMED
+    pivot_offset: -1.0       # pivot on the parent disk plane: tendon length stays linear in bend angle
+  backbone:
+    outer_diameter: 0.001    # from the 1 mm centre hole in the end disk and Tube_coppling_1mm
+    inner_diameter: 0.0007   # ASSUMED
+    youngs_modulus: 6.0e10   # ASSUMED: NiTi, typical 40-75 GPa
+  tendon_holes: auto         # detected from the disk STLs
+
+tendons:
+  pulley_depth: 0.03         # ASSUMED geometry below the base platform
+  carriage_radius: 0.08
+  slack: 0.0
+  limit_timeconst: 0.002     # ASSUMED cable elasticity (McMaster 9442T4)
+
+servo:  # OpenCR actuation module (arXiv 2304.11850): 9 mm drum, 4:1 gears, T-motor MN4004 KV300
+  drum_radius: 0.009
+  gear_ratio: 4.0
+  rotor_inertia: 1.2e-5      # ASSUMED for MN4004
+  max_torque: 0.9            # ASSUMED: ~10 A; paper reports ~1 A per 1 kg tendon load
+  kp: 5.0                    # ASSUMED position-loop gains at the drum
+  kv: 0.05
+  angle_range: [-0.6, 2.0]   # rad at the drum; 1 rad = 9 mm of cable
+  max_speed: 20.0            # ASSUMED
+
+sim:
+  timestep: 0.001             # 0.5 ms gives the same result to 0.1 mm; 2 ms drifts under high tension
+  control_dt: 0.02
+  integrator: implicitfast
+
+static_parts:  # visual only; pose ASSUMED (the STLs carry no assembly frame)
+  - {stl: BasePlatform.stl, pos: [0.0, 0.0, -0.006]}

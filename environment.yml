@@ -16,3 +16,12 @@ dependencies:
     - tensorboard
     - matplotlib
     - "rsl-rl-lib>=5.0.0"
+    # STL -> MJCF -> MJX pipeline (see pipeline/README.md)
+    - mujoco==3.14.0
+    - mujoco-mjx==3.14.0
+    - "jax[cuda12]==0.6.2"  # pinned: jax 0.10 compiled MJX >50x slower in testing; falls back to CPU without a GPU
+    - trimesh
+    - networkx
+    - scipy
+    - pyyaml
+    - pydantic>=2

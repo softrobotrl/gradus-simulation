@@ -10,7 +10,7 @@ We use a monorepo structure to keep the physics bindings and agent training coup
 *   **Package Manager:** Conda
 
 ## Repository Structure
-*   `/pipeline`: CAD to sim pipeline, physics engine definitions, and low-level bindings.
+*   `/pipeline`: CAD to sim pipeline, physics engine definitions, and low-level bindings. See [pipeline/README.md](pipeline/README.md) for the STL to MuJoCo MJX pipeline and how to run it.
 *   `/policy`: SAC implementations, reward shaping, and training loops.
 
 ## Environment setup

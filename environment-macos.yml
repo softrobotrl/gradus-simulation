@@ -15,3 +15,12 @@ dependencies:
     - gymnasium
     - tensorboard
     - matplotlib
+    # STL -> MJCF -> MJX pipeline (see pipeline/README.md)
+    - mujoco==3.14.0
+    - mujoco-mjx==3.14.0
+    - jax==0.6.2  # pinned: jax 0.10 compiled MJX >50x slower in testing
+    - trimesh
+    - networkx
+    - scipy
+    - pyyaml
+    - pydantic>=2
