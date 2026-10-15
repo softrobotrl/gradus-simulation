@@ -18,6 +18,7 @@ import mujoco
 
 from pipeline.terrain import Terrain, add_terrain
 
+# Files are only downloaded when missing: after changing the commit, delete pipeline/assets/unitree_go2/.
 MENAGERIE = ("https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/"
              "6da8b971844845de6ab27315aacc3a3fea4ddb8e/unitree_go2")
 GO2_DIR = Path(__file__).parent / "assets" / "unitree_go2"

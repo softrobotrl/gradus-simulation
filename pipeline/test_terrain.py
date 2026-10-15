@@ -45,18 +45,20 @@ def check_compiles():
 
 
 def check_heights_match_mujoco():
-    t = generate("mixed", seed=5, difficulty=1.0)
-    model = build_model(t)
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    only_terrain = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)  # terrain is geom group 0; Go2 uses groups 2 and 3
-    n = t.heights.shape[0]
-    for r, c in np.random.default_rng(0).integers(1, n - 1, size=(200, 2)):
-        # 1 um off the grid vertex: mj_ray can miss the surface when a ray passes exactly through a vertex
-        x, y = -t.size / 2 + c * CELL + 1e-6, -t.size / 2 + r * CELL + 1e-6
-        dist = mujoco.mj_ray(model, data, np.array([x, y, 5.0]), np.array([0.0, 0.0, -1.0]), only_terrain, 1, -1,
-                             np.zeros(1, np.int32))
-        assert abs(5.0 - dist - t.heights[r, c]) < 1e-4, f"MuJoCo height {5.0 - dist:.4f} != {t.heights[r, c]:.4f}"
+    for kind, seed, difficulty in (("mixed", 5, 1.0), ("rough", 0, 0.005)):  # rough at 0.005: sub-mm height range
+        t = generate(kind, seed=seed, difficulty=difficulty)
+        model = build_model(t)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        only_terrain = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)  # terrain is geom group 0; Go2 uses groups 2, 3
+        n = t.heights.shape[0]
+        for r, c in np.random.default_rng(0).integers(1, n - 1, size=(200, 2)):
+            # 1 um off the grid vertex: mj_ray can report a wrong height for a ray exactly through a vertex
+            x, y = -t.size / 2 + c * CELL + 1e-6, -t.size / 2 + r * CELL + 1e-6
+            dist = mujoco.mj_ray(model, data, np.array([x, y, 5.0]), np.array([0.0, 0.0, -1.0]), only_terrain, 1, -1,
+                                 np.zeros(1, np.int32))
+            assert abs(5.0 - dist - t.heights[r, c]) < 1e-4, \
+                f"{kind}: MuJoCo height {5.0 - dist:.5f} != {t.heights[r, c]:.5f}"
 
 
 if __name__ == "__main__":
