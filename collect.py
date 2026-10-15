@@ -16,6 +16,7 @@ Genesis layout
 Usage
   python collect.py --sim genesis --n-seq 250 --seq-len 100 --num-envs 64
   python collect.py --sim genesis --n-seq 4 --seq-len 8 --num-envs 2 --out data/smoke.npz  # smoke test
+  python collect.py --sim genesis --backend cpu --n-seq 20 --seq-len 100 --num-envs 4  # Apple Metal fallback
 """
 from __future__ import annotations
 
@@ -74,7 +75,7 @@ class GenesisGo2Adapter(DataAdapter):
 
     def __init__(self, num_envs: int, seq_len: int, seed: int = 0,
                  contact_fn: Optional[Callable[[], np.ndarray]] = None,
-                 show_viewer: bool = False):
+                 show_viewer: bool = False, backend: str = "gpu"):
         import genesis as gs
         from go2_train import get_cfgs
         from go2_env import Go2Env
@@ -92,7 +93,7 @@ class GenesisGo2Adapter(DataAdapter):
         self._env_cfg = env_cfg
 
         if not gs._initialized:
-            gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=seed)
+            gs.init(backend=getattr(gs, backend), precision="32", logging_level="warning", seed=seed)
         self.env = Go2Env(num_envs=num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg,
                           reward_cfg=reward_cfg, command_cfg=command_cfg, show_viewer=show_viewer)
         self._E = num_envs
@@ -254,6 +255,8 @@ def load_dataset(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim", default="genesis", choices=list(SIM_REGISTRY))
+    ap.add_argument("--backend", choices=("gpu", "cpu"), default="gpu",
+                    help="Genesis backend; use cpu to avoid Apple Metal zero-copy compatibility errors")
     ap.add_argument("--n-seq", type=int, default=250, help="paper optimum Fig.4")
     ap.add_argument("--seq-len", type=int, default=100, help="steps per sequence (~MaxStep 100)")
     ap.add_argument("--num-envs", type=int, default=64)
@@ -263,7 +266,10 @@ def main():
     args = ap.parse_args()
 
     cls = SIM_REGISTRY[args.sim]
-    adapter: DataAdapter = cls(num_envs=args.num_envs, seq_len=args.seq_len, seed=args.seed)
+    adapter_kwargs = dict(num_envs=args.num_envs, seq_len=args.seq_len, seed=args.seed)
+    if args.sim == "genesis":
+        adapter_kwargs["backend"] = args.backend
+    adapter: DataAdapter = cls(**adapter_kwargs)
     try:
         s, a, sn = collect_sequences(adapter, args.n_seq, args.seq_len,
                                      expert_frac=args.expert_frac, seed=args.seed)
