@@ -34,9 +34,10 @@ def check_borders_and_limits():
 
 
 def check_spawn_tile_is_flat():
-    for seed in range(20):
-        t = generate("mixed", seed=seed, difficulty=1.0)
-        assert t.max_height(*t.spawn_xy) == 0, f"seed {seed}: spawn point {t.spawn_xy} is not on the flat tile"
+    for kind in ("mixed", "rough", "slope", "obstacles"):
+        for seed in range(10):
+            t = generate(kind, seed=seed, difficulty=1.0)
+            assert t.max_height(*t.spawn_xy) == 0, f"{kind} seed {seed}: spawn point {t.spawn_xy} is not flat"
 
 
 def check_compiles():
@@ -62,18 +63,16 @@ def check_heights_match_mujoco():
 
 
 def check_drop():
-    for kind in ("mixed", "rough", "slope", "obstacles"):
-        t = generate(kind, seed=1, difficulty=1.0)
-        model = build_model(t)
-        data = spawn(model, t)
-        ground = t.max_height(*t.spawn_xy)
-        mujoco.mj_step(model, data, nstep=round(1.0 / model.opt.timestep))
-        pairs = data.contact.geom
-        on_terrain = set(pairs[(pairs == model.geom("terrain").id).any(axis=1)].ravel())
-        feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
-        assert not data.warning.number.any(), f"{kind}: unstable simulation (MuJoCo reset it)"
-        assert data.qpos[2] - ground > 0.15, f"{kind}: base only {data.qpos[2] - ground:.3f} m above the ground"
-        assert len(on_terrain & feet) >= 3, f"{kind}: only {len(on_terrain & feet)} feet on the terrain"
+    t = generate("mixed", seed=1, difficulty=1.0)
+    model = build_model(t)
+    data = spawn(model, t)
+    mujoco.mj_step(model, data, nstep=round(1.0 / model.opt.timestep))
+    pairs = data.contact.geom
+    on_terrain = set(pairs[(pairs == model.geom("terrain").id).any(axis=1)].ravel())
+    feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
+    assert not data.warning.number.any(), "unstable simulation (MuJoCo reset it)"
+    assert data.qpos[2] > 0.15, f"base only {data.qpos[2]:.3f} m above the flat spawn tile"
+    assert on_terrain >= feet, f"only {len(on_terrain & feet)} feet on the terrain"
 
 
 if __name__ == "__main__":

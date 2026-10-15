@@ -2,7 +2,8 @@
 
 Usage: python -m pipeline.run_go2 --terrain mixed --seed 3 --difficulty 0.5 --grid 4
 
-Go2 holds its home pose with its built-in position servos (there is no policy yet); push it with Ctrl + right-drag.
+Go2 starts on a flat tile and holds its home pose with its built-in position servos (there is no policy yet); push it
+with Ctrl + right-drag.
 Backspace resets to the model's default pose at the origin, not the spawn point: rerun the command instead.
 
 Go2 is a stand-in until the Gradus quadruped model exists. On first run its MJX model (~30 MB) is downloaded from

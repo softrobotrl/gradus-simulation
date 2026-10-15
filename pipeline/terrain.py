@@ -5,7 +5,7 @@
 
 The ground is a grid of TILE x TILE tiles. Each tile is rough, sloped or covered in blocks ("mixed" draws one kind per
 tile at random, any other kind is used everywhere). Every tile border sits at height 0, so neighbouring tiles never
-form a cliff. The same arguments always give the same terrain.
+form a cliff. The spawn tile is always flat. The same arguments always give the same terrain.
 """
 
 import math
@@ -71,8 +71,8 @@ def generate(kind: str = "mixed", seed: int | None = None, difficulty: float = 0
     for r in range(grid):
         for c in range(grid):
             k = str(rng.choice(KINDS)) if kind == "mixed" else kind
-            if kind == "mixed" and (r, c) == spawn:
-                k = "flat"  # start the robot on level ground
+            if (r, c) == spawn:
+                k = "flat"  # the robot always starts on level ground
             heights[r * n:(r + 1) * n + 1, c * n:(c + 1) * n + 1] = _tile(k, rng.uniform(0, difficulty), n + 1, rng)
     size = grid * TILE
     return Terrain(heights, size, ((spawn[1] + 0.5) * TILE - size / 2, (spawn[0] + 0.5) * TILE - size / 2))
