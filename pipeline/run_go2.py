@@ -47,6 +47,8 @@ def fetch_go2() -> Path:
 def build_model(terrain: Terrain) -> mujoco.MjModel:
     spec = mujoco.MjSpec.from_file(str(fetch_go2()))
     spec.delete(spec.geom("floor"))  # the terrain is the floor; MuJoCo cannot collide a plane with a height field
+    for geom in spec.geoms:
+        geom.margin = 0.0  # menagerie uses 0.001; MJX cannot collide a height field with a nonzero margin
     add_terrain(spec, terrain, material="groundplane")
     return spec.compile()
 

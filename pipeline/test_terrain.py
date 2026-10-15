@@ -76,6 +76,19 @@ def check_drop():
     assert on_terrain >= feet, f"only {len(on_terrain & feet)} feet on the terrain"
 
 
+def check_mjx():
+    import jax
+    from mujoco import mjx
+
+    t = generate("rough", seed=1, difficulty=1.0)
+    model = build_model(t)
+    mx, dx = mjx.put_model(model), mjx.put_data(model, spawn(model, t))
+    step = jax.jit(mjx.step)
+    for _ in range(10):
+        dx = step(mx, dx)
+    assert np.isfinite(np.asarray(dx.qpos)).all(), "MJX simulation blew up"
+
+
 if __name__ == "__main__":
     for name, check in list(globals().items()):
         if name.startswith("check_"):
