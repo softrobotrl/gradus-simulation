@@ -32,7 +32,7 @@ class Terrain:
     spawn_xy: tuple[float, float]  # centre of the spawn tile
 
     def max_height(self, x: float, y: float, radius: float = 0.4) -> float:
-        """Highest terrain point within a square of half-width radius around (x, y)."""
+        """Highest terrain point within a square of half-width radius around (x, y), which must lie on the terrain."""
         lo = np.floor((np.array([x, y]) - radius + self.size / 2) / CELL).astype(int).clip(0)
         hi = np.ceil((np.array([x, y]) + radius + self.size / 2) / CELL).astype(int) + 1
         return float(self.heights[lo[1]:hi[1], lo[0]:hi[0]].max())
@@ -44,7 +44,7 @@ def _tile(kind: str, d: float, n: int, rng: np.random.Generator) -> np.ndarray:
     x, y = np.meshgrid(u, u)
     border = (1 - np.maximum(abs(x), abs(y))) * TILE / 2  # m from the nearest tile edge
     if kind == "rough":
-        h = gaussian_filter(rng.standard_normal((n, n)), sigma=0.1 / CELL)  # ~10 cm wide bumps
+        h = gaussian_filter(rng.standard_normal((n, n)), sigma=0.1 / CELL)  # sigma 10 cm: bumps ~0.4 m apart
         return h * d * ROUGH_AMP / np.abs(h).max() * np.clip(border / 0.1, 0, 1)  # fade to 0 over the outer 10 cm
     if kind == "slope":
         h = math.tan(math.radians(d * SLOPE_DEG)) * np.minimum(border, TILE / 2 - SLOPE_TOP)
@@ -53,9 +53,9 @@ def _tile(kind: str, d: float, n: int, rng: np.random.Generator) -> np.ndarray:
     if kind == "obstacles":
         lo, hi = round(0.2 / CELL), round(0.5 / CELL)  # 20-50 cm blocks
         for _ in range(rng.integers(5, 16)):
-            w, l = rng.integers(lo, hi + 1, size=2)
-            r, c = rng.integers(1, n - 1 - np.array([w, l]))  # keeps the border row/column at 0
-            h[r:r + w, c:c + l] = d * BLOCK_HEIGHT
+            rows, cols = rng.integers(lo, hi + 1, size=2)
+            r, c = rng.integers(1, n - np.array([rows, cols]))  # keeps the border row/column at 0
+            h[r:r + rows, c:c + cols] = d * BLOCK_HEIGHT
     return h
 
 
