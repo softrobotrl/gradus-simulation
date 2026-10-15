@@ -289,3 +289,6 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Unitree Go2 from mujoco_menagerie, downloaded by pipeline/run_go2.py
+pipeline/assets/unitree_go2/

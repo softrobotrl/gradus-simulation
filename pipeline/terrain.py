@@ -11,6 +11,7 @@ form a cliff. The same arguments always give the same terrain.
 import math
 from dataclasses import dataclass
 
+import mujoco
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
@@ -75,3 +76,16 @@ def generate(kind: str = "mixed", seed: int | None = None, difficulty: float = 0
             heights[r * n:(r + 1) * n + 1, c * n:(c + 1) * n + 1] = _tile(k, rng.uniform(0, difficulty), n + 1, rng)
     size = grid * TILE
     return Terrain(heights, size, ((spawn[1] + 0.5) * TILE - size / 2, (spawn[0] + 0.5) * TILE - size / 2))
+
+
+def add_terrain(spec: mujoco.MjSpec, terrain: Terrain, material: str | None = None) -> None:
+    """Add the terrain to spec as a height-field asset plus a geom named "terrain" in geom group 0."""
+    h = terrain.heights
+    lo, z_range = float(h.min()), max(float(np.ptp(h)), 1e-3)  # flat terrain: avoid a zero range
+    spec.add_hfield(name="terrain", nrow=h.shape[0], ncol=h.shape[1],
+                    size=[terrain.size / 2, terrain.size / 2, z_range, BASE_DEPTH],
+                    userdata=((h - lo) / z_range).ravel().tolist())  # MuJoCo wants elevation in [0, 1]
+    geom = spec.worldbody.add_geom(name="terrain", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
+                                   pos=[0, 0, lo])  # shift back so world z equals terrain.heights
+    if material:
+        geom.material = material
