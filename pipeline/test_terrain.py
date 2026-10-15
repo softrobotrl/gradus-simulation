@@ -71,8 +71,9 @@ def check_drop():
     on_terrain = set(pairs[(pairs == model.geom("terrain").id).any(axis=1)].ravel())
     feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
     assert not data.warning.number.any(), "unstable simulation (MuJoCo reset it)"
+    drift = np.linalg.norm(data.qpos[:2] - t.spawn_xy)
+    assert drift < 0.1, f"base drifted {drift:.3f} m from the spawn point"
     assert data.qpos[2] > 0.15, f"base only {data.qpos[2]:.3f} m above the flat spawn tile"
-    assert np.hypot(*(data.qpos[:2] - t.spawn_xy)) < 0.1, "Go2 is not on the spawn tile"
     assert on_terrain >= feet, f"only {len(on_terrain & feet)} feet on the terrain"
 
 
@@ -84,9 +85,13 @@ def check_mjx():
     model = build_model(t)
     mx, dx = mjx.put_model(model), mjx.put_data(model, spawn(model, t))
     step = jax.jit(mjx.step)
-    for _ in range(10):
+    n = round(0.5 / model.opt.timestep)  # the feet first touch the terrain after ~0.04 s
+    for _ in range(n):
         dx = step(mx, dx)
-    assert np.isfinite(np.asarray(dx.qpos)).all(), "MJX simulation blew up"
+    data = spawn(model, t)
+    mujoco.mj_step(model, data, nstep=n)
+    assert dx.qpos[2] > 0.15, f"MJX: base only {float(dx.qpos[2]):.3f} m above the flat spawn tile"  # NaN fails too
+    assert abs(dx.qpos[2] - data.qpos[2]) < 0.005, "MJX and MuJoCo disagree on the base height"
 
 
 if __name__ == "__main__":
