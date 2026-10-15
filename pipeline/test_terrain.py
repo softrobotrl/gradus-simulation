@@ -91,7 +91,8 @@ def check_mjx():
     data = spawn(model, t)
     mujoco.mj_step(model, data, nstep=n)
     assert dx.qpos[2] > 0.15, f"MJX: base only {float(dx.qpos[2]):.3f} m above the flat spawn tile"  # NaN fails too
-    assert abs(dx.qpos[2] - data.qpos[2]) < 0.005, "MJX and MuJoCo disagree on the base height"
+    base_diff = np.abs(np.asarray(dx.qpos[:3]) - data.qpos[:3]).max()
+    assert base_diff < 0.005, f"MJX and MuJoCo base positions differ by {base_diff * 1000:.1f} mm"
 
 
 if __name__ == "__main__":
