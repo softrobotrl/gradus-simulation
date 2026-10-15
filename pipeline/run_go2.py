@@ -51,7 +51,7 @@ def build_model(terrain: Terrain) -> mujoco.MjModel:
 
 
 def spawn(model: mujoco.MjModel, terrain: Terrain) -> mujoco.MjData:
-    """Go2 in its home pose at the spawn tile, 2 cm above the highest terrain under it."""
+    """Go2 in its home pose at the spawn tile, raised so its feet just clear the highest terrain under it."""
     data = mujoco.MjData(model)
     mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
     x, y = terrain.spawn_xy

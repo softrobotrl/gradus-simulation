@@ -71,7 +71,7 @@ def check_drop():
         pairs = data.contact.geom
         on_terrain = set(pairs[(pairs == model.geom("terrain").id).any(axis=1)].ravel())
         feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
-        assert np.isfinite(data.qpos).all(), f"{kind}: simulation blew up"
+        assert not data.warning.number.any(), f"{kind}: unstable simulation (MuJoCo reset it)"
         assert data.qpos[2] - ground > 0.15, f"{kind}: base only {data.qpos[2] - ground:.3f} m above the ground"
         assert len(on_terrain & feet) >= 3, f"{kind}: only {len(on_terrain & feet)} feet on the terrain"
 
