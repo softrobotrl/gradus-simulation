@@ -1,0 +1,27 @@
+# Native Windows variant of environment.yml (no WSL needed).
+#   conda env create -f environment-windows.yml
+# PyTorch gets CUDA (SAC networks and replay buffer on the NVIDIA GPU). JAX has no CUDA build for native Windows,
+# so the MJX physics runs on the CPU; use WSL2 + environment.yml to run the physics on the GPU too.
+# Genesis (go2_*.py) is left out; add `genesis-world` under pip if you need it.
+name: gradus-rl
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pip
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu126
+    - "torch>=2.8.0"
+    - tensordict
+    - tensorboard
+    - matplotlib
+    - pyyaml
+    - "pydantic>=2"
+    # STL -> MJCF -> MJX pipeline (see pipeline/README.md)
+    - mujoco==3.14.0
+    - mujoco-mjx==3.14.0
+    - jax==0.6.2  # CPU; same pin as environment.yml
+    - trimesh
+    - networkx
+    - scipy

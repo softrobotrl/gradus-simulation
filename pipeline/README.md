@@ -65,6 +65,16 @@ Each step the policy sees joint angles and speeds, servo targets, tendon tension
 
 `validate_env.py` checks the environment works: it pulls each tendon and checks the tip bends toward it. It also checks that releasing the servos makes the tendons go slack, that MJX gives the same result as regular CPU MuJoCo, and that 64 copies of the environment run side by side without the numbers blowing up.
 
+## Board-pushing task
+
+`board_env.py` is the first real task: the leg pushes a board resting on rails above it with a stepping gait, a stand-in for walking. `make_board_env(config, num_envs)` returns an env with the same interface as `TendonLegEnv`, plus `extras["final_observation"]` for SAC. It runs on MJX when a GPU is usable, otherwise on `cpu_env.py`, a C MuJoCo backend in CPU threads that is ~150× faster than MJX on a CPU. The SAC trainer is in [policy/](../policy/README.md).
+
+```bash
+python -m pipeline.validate_board_env pipeline/configs/opencr_tdcr_spatial.yaml   # checks the task is solvable
+```
+
+Everything about it (physics, observations, reward, settings, SAC usage, GPU setup on Windows via WSL2, how to extend) is in [BOARD_TASK.md](BOARD_TASK.md).
+
 ## Pulling tendons by hand
 
 Open the model in the MuJoCo viewer (needs a display; works on WSLg):
