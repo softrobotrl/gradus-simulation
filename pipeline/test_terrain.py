@@ -72,6 +72,7 @@ def check_drop():
     feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
     assert not data.warning.number.any(), "unstable simulation (MuJoCo reset it)"
     assert data.qpos[2] > 0.15, f"base only {data.qpos[2]:.3f} m above the flat spawn tile"
+    assert np.hypot(*(data.qpos[:2] - t.spawn_xy)) < 0.1, "Go2 is not on the spawn tile"
     assert on_terrain >= feet, f"only {len(on_terrain & feet)} feet on the terrain"
 
 
