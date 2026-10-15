@@ -10,7 +10,7 @@ import math
 import mujoco
 import numpy as np
 
-from pipeline.run_go2 import build_model
+from pipeline.run_go2 import build_model, spawn
 from pipeline.terrain import BLOCK_HEIGHT, CELL, ROUGH_AMP, SLOPE_DEG, SLOPE_TOP, TILE, generate
 
 
@@ -59,6 +59,21 @@ def check_heights_match_mujoco():
                                  np.zeros(1, np.int32))
             assert abs(5.0 - dist - t.heights[r, c]) < 1e-4, \
                 f"{kind}: MuJoCo height {5.0 - dist:.5f} != {t.heights[r, c]:.5f}"
+
+
+def check_drop():
+    for kind in ("mixed", "rough", "slope", "obstacles"):
+        t = generate(kind, seed=1, difficulty=1.0)
+        model = build_model(t)
+        data = spawn(model, t)
+        ground = t.max_height(*t.spawn_xy)
+        mujoco.mj_step(model, data, nstep=round(1.0 / model.opt.timestep))
+        pairs = data.contact.geom
+        on_terrain = set(pairs[(pairs == model.geom("terrain").id).any(axis=1)].ravel())
+        feet = {model.geom(f).id for f in ("FL", "FR", "RL", "RR")}
+        assert np.isfinite(data.qpos).all(), f"{kind}: simulation blew up"
+        assert data.qpos[2] - ground > 0.15, f"{kind}: base only {data.qpos[2] - ground:.3f} m above the ground"
+        assert len(on_terrain & feet) >= 3, f"{kind}: only {len(on_terrain & feet)} feet on the terrain"
 
 
 if __name__ == "__main__":
