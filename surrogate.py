@@ -106,6 +106,8 @@ class SurrogateConfig:
 class Surrogate:
     def __init__(self, config: SurrogateConfig, device: Optional[str] = None):
         self.cfg = config
+        torch.manual_seed(config.seed)
+        np.random.seed(config.seed)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = SurrogateMLP(config.input_dim, config.state_dim, config.hidden_dims).to(self.device)
         self.x_scaler = StandardScaler()  # over concat(s, a)
@@ -124,14 +126,18 @@ class Surrogate:
             s = s.reshape(-1, s.shape[-1])
             a = a.reshape(-1, a.shape[-1])
             s_next = s_next.reshape(-1, s_next.shape[-1])
-        assert s.shape[0] == a.shape[0] == s_next.shape[0]
-        assert s.shape[1] + a.shape[1] == s.shape[1] + a.shape[1]
+        if s.ndim != 2 or a.ndim != 2 or s_next.ndim != 2:
+            raise ValueError("Expected flat (N,D) or sequenced (S,T,D) arrays")
+        if s.shape != s_next.shape or len(s) != len(a):
+            raise ValueError("State, action and next-state arrays must have matching transitions")
         return s, a, s_next
 
     def _split_by_sequence(
         self, s, a, s_next, val_frac: float
     ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
         """Split by sequence idx when input is (S,T,D); else random flat split."""
+        if not 0 < val_frac < 1 or len(s) < 2:
+            raise ValueError("Validation requires at least two samples/sequences and 0 < val_frac < 1")
         if np.asarray(s).ndim == 3:
             n_seq = len(s)
             idx = np.random.permutation(n_seq)
@@ -149,9 +155,12 @@ class Surrogate:
 
     # -- train: Eq.4 -- #
     def train(self, s, a, s_next, verbose: bool = True) -> Dict[str, List[float]]:
-        s, a, s_next = self._to_flat(s, a, s_next)
-        assert s.shape[1] == self.cfg.state_dim, f"s dim {s.shape[1]} != {self.cfg.state_dim}"
-        assert a.shape[1] == self.cfg.action_dim, f"a dim {a.shape[1]} != {self.cfg.action_dim}"
+        s, a, s_next = (np.asarray(x, dtype=np.float64) for x in (s, a, s_next))
+        flat_s, flat_a, _ = self._to_flat(s, a, s_next)
+        assert flat_s.shape[1] == self.cfg.state_dim, f"s dim {flat_s.shape[1]} != {self.cfg.state_dim}"
+        assert flat_a.shape[1] == self.cfg.action_dim, f"a dim {flat_a.shape[1]} != {self.cfg.action_dim}"
+        if self.cfg.epochs < 1:
+            raise ValueError("epochs must be positive")
         (tr_s, tr_a, tr_n), (va_s, va_a, va_n) = self._split_by_sequence(
             np.asarray(s), np.asarray(a), np.asarray(s_next), self.cfg.val_frac
         )
