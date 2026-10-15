@@ -5,7 +5,8 @@
 
 The ground is a grid of TILE x TILE tiles. Each tile is rough, sloped or covered in blocks ("mixed" draws one kind per
 tile at random, any other kind is used everywhere). Every tile border sits at height 0, so neighbouring tiles never
-form a cliff. The spawn tile is always flat. The same arguments always give the same terrain.
+form a cliff. Each tile draws its own difficulty from U(0, difficulty), so difficulty is a maximum. The spawn tile is
+always flat. The same arguments always give the same terrain.
 """
 
 import math

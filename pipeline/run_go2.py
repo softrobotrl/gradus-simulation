@@ -3,7 +3,7 @@
 Usage: python -m pipeline.run_go2 --terrain mixed --seed 3 --difficulty 0.5 --grid 4
 
 Go2 starts on a flat tile and holds its home pose with its built-in position servos (there is no policy yet); push it
-with Ctrl + right-drag.
+by double-clicking it, then Ctrl + right-drag.
 Backspace resets to the model's default pose at the origin, not the spawn point: rerun the command instead.
 
 Go2 is a stand-in until the Gradus quadruped model exists. On first run its MJX model (~30 MB) is downloaded from
@@ -69,7 +69,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--terrain", choices=("mixed", *KINDS, "flat"), default="mixed")
     parser.add_argument("--seed", type=int, help="omit for a random seed (printed so the run can be repeated)")
-    parser.add_argument("--difficulty", type=float, default=0.5, help="0..1: bump height, slope angle, block height")
+    parser.add_argument("--difficulty", type=float, default=0.5,
+                        help="0..1: max per-tile bump height, slope angle, block height")
     parser.add_argument("--grid", type=int, default=4, help="N for an N x N grid of 2 m tiles")
     args = parser.parse_args()
     seed = args.seed if args.seed is not None else int(np.random.default_rng().integers(2**31))
@@ -77,9 +78,9 @@ def main() -> None:
           f"--difficulty {args.difficulty} --grid {args.grid}")
     terrain = generate(args.terrain, seed, args.difficulty, args.grid)
     model = build_model(terrain)
-    import mujoco.viewer  # needs a display; imported here so the checks can run headless
+    from mujoco import viewer  # needs a display; imported here so the checks can run headless
 
-    mujoco.viewer.launch(model, spawn(model, terrain))
+    viewer.launch(model, spawn(model, terrain))
 
 
 if __name__ == "__main__":
