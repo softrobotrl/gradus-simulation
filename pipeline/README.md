@@ -96,6 +96,23 @@ python -m pipeline.train_example pipeline/configs/opencr_tdcr_spatial.yaml --gen
 
 On the OpenCR robot the backbone holds the chain upright by itself, so the example task (stand upright) is already solved before training. Expect rewards near 1.0 from the start.
 
+## Random terrain
+
+`run_go2.py` drops a Unitree Go2 (a stand-in until the Gradus quadruped model exists) onto random terrain and opens the MuJoCo viewer:
+
+```bash
+python -m pipeline.run_go2 --terrain mixed --seed 3 --difficulty 0.5
+```
+
+- `--terrain`: `mixed` (default; a random kind per 2 m tile), `rough`, `slope`, `obstacles` or `flat`.
+- `--seed`: the same seed gives the same terrain. Leave it out for a random one; the command to repeat the run is printed.
+- `--difficulty`: 0 to 1. Scales bump height (up to 8 cm), slope angle (up to 20°) and block height (up to 12 cm).
+- `--grid`: N for an N x N grid of tiles (default 4, so 8 m x 8 m). The robot always starts on a flat tile, so `--grid 1` is flat ground.
+
+Go2 starts on a flat tile and holds its standing pose; it has no walking policy yet. Push it onto the terrain with `Ctrl` + right drag. The first run downloads its model (~30 MB) from [mujoco_menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/main/unitree_go2) into `assets/unitree_go2/`; delete that folder to download it again.
+
+The terrain is a single MuJoCo height field, so it also works in MJX. To add it to another model, call `terrain.add_terrain(spec, terrain.generate(...))` on a `mujoco.MjSpec`; for MJX, set geom margins to 0 as `run_go2.build_model` does. Run `python -m pipeline.test_terrain` to check it.
+
 ## What the hardware team delivers for the real leg
 
 1. One STL per distinct part, in a shared unit.
