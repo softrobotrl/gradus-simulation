@@ -13,7 +13,7 @@ from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
 
-from go2_env import Go2Env
+from genesis_samples.go2_env import Go2Env
 
 
 def get_train_cfg(exp_name):

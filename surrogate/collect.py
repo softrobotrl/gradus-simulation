@@ -77,8 +77,8 @@ class GenesisGo2Adapter(DataAdapter):
                  contact_fn: Optional[Callable[[], np.ndarray]] = None,
                  show_viewer: bool = False, backend: str = "gpu"):
         import genesis as gs
-        from go2_train import get_cfgs
-        from go2_env import Go2Env
+        from genesis_samples.go2_train import get_cfgs
+        from genesis_samples.go2_env import Go2Env
 
         self._gs = gs
         self.contact_fn = contact_fn

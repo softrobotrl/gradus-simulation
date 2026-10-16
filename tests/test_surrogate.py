@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
-from surrogate import Surrogate, SurrogateConfig
+from surrogate.surrogate import Surrogate, SurrogateConfig
 
 
 class SurrogateTests(unittest.TestCase):

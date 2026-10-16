@@ -15,8 +15,8 @@ import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
 
-from collect import load_dataset
-from surrogate import Surrogate, SurrogateConfig
+from surrogate.collect import load_dataset
+from surrogate.surrogate import Surrogate, SurrogateConfig
 
 
 def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
