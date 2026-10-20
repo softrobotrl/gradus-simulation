@@ -54,6 +54,48 @@ TENDON_NAMES = tuple(f"{leg.name}_t{k}" for leg in LEGS for k in (0, 1))
 ACTUATOR_NAMES = tuple(f"{name}_servo" for name in TENDON_NAMES)
 FOOT_GEOMS = tuple(f"{leg.name}_foot" for leg in LEGS)
 
+# Observation layout, in order: the state residual, then the raw state, then the
+# action context.  Shared by the C and the MJX backends, so a policy trained on
+# one runs on the other.
+OBS_PARTS = (
+    ("state_residual", (
+        ("base_height_residual", 1),
+        ("projected_gravity_residual", 3),
+        ("joint_pos_residual", 8),
+        ("joint_vel_residual", 8),
+        ("velocity_residual", 3),
+        ("tendon_length_residual", 8),
+    )),
+    ("raw_state", (
+        ("base_quat", 4),
+        ("base_lin_vel", 3),
+        ("base_ang_vel", 3),
+        ("tendon_tension", 8),
+        ("foot_contact", 4),
+    )),
+    ("action_context", (
+        ("nominal_action", 8),
+        ("applied_residual", 8),
+        ("previous_action", 8),
+        ("gait_phase", 2),
+        ("command", 3),
+    )),
+)
+
+
+def obs_layout() -> dict[str, slice]:
+    """Name -> slice of the observation vector, for every part and every group."""
+    layout: dict[str, slice] = {}
+    start = 0
+    for group, parts in OBS_PARTS:
+        group_start = start
+        for name, size in parts:
+            layout[name] = slice(start, start + size)
+            start += size
+        layout[group] = slice(group_start, start)
+    return layout
+
+
 # MuJoCo records solver divergence in these warning counters; a diverged env is
 # turned into NaN so the task layer can terminate and reset it.
 _DIVERGED = (mujoco.mjtWarning.mjWARN_BADQACC, mujoco.mjtWarning.mjWARN_BADQPOS, mujoco.mjtWarning.mjWARN_BADQVEL)
@@ -209,39 +251,8 @@ class DogEnv:
         self.gait_phase = np.repeat(leg_phase, 2) + np.tile(tendon_phase, 4)
 
         # Observation layout, in order.  The first block is the explicit state residual.
-        self._obs_parts = (
-            ("state_residual", (
-                ("base_height_residual", 1),
-                ("projected_gravity_residual", 3),
-                ("joint_pos_residual", 8),
-                ("joint_vel_residual", 8),
-                ("velocity_residual", 3),
-                ("tendon_length_residual", 8),
-            )),
-            ("raw_state", (
-                ("base_quat", 4),
-                ("base_lin_vel", 3),
-                ("base_ang_vel", 3),
-                ("tendon_tension", 8),
-                ("foot_contact", 4),
-            )),
-            ("action_context", (
-                ("nominal_action", 8),
-                ("applied_residual", 8),
-                ("previous_action", 8),
-                ("gait_phase", 2),
-                ("command", 3),
-            )),
-        )
-        self._obs_layout: dict[str, slice] = {}
-        start = 0
-        for group, parts in self._obs_parts:
-            group_start = start
-            for name, size in parts:
-                self._obs_layout[name] = slice(start, start + size)
-                start += size
-            self._obs_layout[group] = slice(group_start, start)
-        self.num_obs = start
+        self._obs_layout: dict[str, slice] = obs_layout()
+        self.num_obs = max(s.stop for s in self._obs_layout.values())
 
         # Per-env task state.
         self.t = np.zeros(self.num_envs, dtype=np.int32)
@@ -610,14 +621,26 @@ class DogEnv:
         self._pool.shutdown(wait=True)
 
 
-def make_dog_env(num_envs: int, backend: str = "cpu", seed: int = 0, **kwargs) -> DogEnv:
-    """Create the batched dog env.  ``backend="cpu"`` is the only backend today; the MJCF is MJX-ready."""
+def make_dog_env(num_envs: int, backend: str = "cpu", seed: int = 0, **kwargs):
+    """Create the batched dog env.
+
+    ``backend="cpu"`` runs plain C MuJoCo in CPU threads (the reference backend).
+    ``backend="mjx"`` runs the same task in MuJoCo MJX on the GPU.
+    ``backend="auto"`` picks MJX when JAX sees a GPU, else the C backend.
+    """
     if backend not in ("cpu", "auto", "mjx"):
         raise ValueError(f"backend must be 'cpu', 'auto' or 'mjx', got {backend!r}")
-    if backend == "mjx":
-        raise RuntimeError("the MJX dog backend is not implemented yet; use backend='cpu'")
     if backend == "auto":
-        backend = "cpu"
+        try:
+            import jax
+
+            backend = "mjx" if jax.devices("gpu") else "cpu"
+        except Exception:
+            backend = "cpu"
+    if backend == "mjx":
+        from pipeline.dog_mjx_env import make_dog_mjx_env
+
+        return make_dog_mjx_env(num_envs, seed=seed, **kwargs)
     env = DogEnv(num_envs, seed=seed, **kwargs)
     print(f"DogEnv: C MuJoCo on CPU, {env.num_threads} physics threads, {env.num_envs} envs")
     return env

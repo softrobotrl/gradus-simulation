@@ -119,9 +119,18 @@ the standing, and the policy only adds a residual on top of it.
 - Reward: alive + height + upright + velocity + yaw + posture, minus tension, action-rate and residual
   costs. The episode ends when the dog falls below 0.12 m or tilts more than 0.7 rad.
 
-The physics runs in plain C MuJoCo in CPU threads (`dog_env.py`), about 6,000 transitions/s with 64
-environments on this machine. The MJCF itself is written to stay MJX-compatible, but there is no MJX
-backend for the dog yet. Training and evaluation entry points are in [policy/](../policy/README.md):
+The physics has two backends, with the same task, observation layout and action mapping:
+
+- `pipeline/dog_env.py` - plain C MuJoCo in CPU threads (`--backend cpu`), about 6,000 transitions/s with 64
+  environments on this machine. This is the reference implementation.
+- `pipeline/dog_mjx_env.py` - the same environment in MuJoCo MJX on the GPU (`--backend mjx`). 2,048
+  environments reach about 5,500 transitions/s, and it leaves the CPU free for the learner. The model is
+  small, so the GPU is limited by kernel launches rather than by arithmetic.
+
+`python -m pipeline.validate_dog_env` checks that the two backends agree (height, tilt, reward, foot
+contacts) and that a policy trained on one runs on the other.
+
+Training and evaluation entry points are in [policy/](../policy/README.md):
 `python -m policy.train_dog_sac` and `python -m policy.play_dog_sac`.
 
 ## Pulling tendons by hand

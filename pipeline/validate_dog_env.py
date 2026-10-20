@@ -189,6 +189,38 @@ def env_checks(c: Checker) -> None:
     env.close()
 
 
+def mjx_checks(c: Checker) -> None:
+    """The MJX (GPU) backend must reproduce the C backend's behaviour."""
+    print("MJX backend")
+    try:
+        import jax
+
+        from pipeline.dog_mjx_env import make_dog_mjx_env
+    except Exception as exc:
+        print(f"  skipped: {exc}")
+        return
+    if not jax.devices("gpu"):
+        print("  skipped: JAX sees no GPU")
+        return
+
+    cfg = dict(nominal_mode="pd", command_mode="stand", episode_s=4.0, init_joint_noise=0.02,
+               init_tilt_noise=0.01, init_height_noise=0.002, init_vel_noise=0.0)
+    cenv = DogEnv(16, DogEnvConfig(**cfg), seed=5, num_threads=8)
+    menv = make_dog_mjx_env(16, seed=5, device="gpu", **cfg)
+    cenv.reset()
+    menv.reset()
+    action = np.zeros((16, 8), dtype=np.float32)
+    for _ in range(50):
+        _, _, _, cex = cenv.step(action)
+        _, _, _, mex = menv.step(action)
+    for key, tol in (("/base_height", 0.005), ("/tilt", 0.01), ("/reward_mean", 0.05),
+                     ("/foot_contact", 0.05)):
+        cv, mv = cex["log"][key], mex["log"][key]
+        c.check(f"MJX matches C: {key}", abs(cv - mv) < tol, f"C={cv:.4f} MJX={mv:.4f}")
+    c.check("MJX observation layout matches the C backend", menv.obs_layout == cenv.obs_layout)
+    cenv.close()
+
+
 def render_preview(path: Path, out: Path) -> None:
     print("preview")
     try:
@@ -231,6 +263,7 @@ def main(argv: list[str] | None = None) -> None:
     env.close()
     tendon_pull_checks(c, path)
     env_checks(c)
+    mjx_checks(c)
     if args.render:
         render_preview(path, path.parent / "stand.png")
 

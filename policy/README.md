@@ -172,7 +172,12 @@ python -m pipeline.validate_dog_env                                        # che
 python -m policy.train_dog_sac --run-name stand --total-steps 200000        # train
 python -m policy.play_dog_sac logs/dog_sac/stand/checkpoints/best.pt        # evaluate
 python -m policy.play_dog_sac logs/dog_sac/stand/checkpoints/best.pt --view # watch it
+python -m policy.train_dog_sac --backend mjx --num-envs 2048 ...           # physics on the GPU
 ```
+
+`--backend cpu` runs the physics in C MuJoCo threads (about 6,000 transitions/s with 64 envs);
+`--backend mjx` runs the same task in MuJoCo MJX on the GPU (about 5,500 transitions/s with 2,048 envs
+and the CPU left free for the learner).
 
 | File | What's in it |
 |---|---|
@@ -192,8 +197,16 @@ Two settings matter more than the rest, and both are in the defaults:
 Result so far (50 k transitions, 64 envs, 4 s episodes, RTX 3070 + 20-core CPU): the policy stands for
 the full episode, 0 % failures, final height 0.215 m, tilt 0.003 rad, all four feet in contact, and the
 stochastic (exploring) policy scores the same as the deterministic one, so the exploration noise is
-harmless at this scale. Walking is the next task: use `--command-mode velocity` with a lower
-`--sac.action-cost` and a bigger `--residual-scale`, otherwise the penalty keeps the legs still.
+harmless at this scale.
+
+Walking is the next task and is only half solved. The nominal controller already walks: a 2 Hz trot with
+0.15 rad of drum swing moves the dog forward at 0.05 m/s, so the job of the policy is to keep the gait
+stable and to track the commanded speed. A 300 k transition run with a fixed 0.05 m/s command learned to
+walk at 0.03 m/s with 0.86/4 feet in contact, but 38 % of the deterministic episodes ended in a fall.
+Two things make this harder than standing: the velocity reward needs a narrow sigma (`--velocity-sigma
+0.05`, the default 0.2 is so wide that standing still scores almost as well as walking), and the
+termination limits have to be forgiving enough that a stumble does not end the episode
+(`--terminate-height 0.10 --terminate-tilt 0.9`).
 
 ## Troubleshooting
 
