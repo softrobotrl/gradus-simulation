@@ -201,12 +201,21 @@ harmless at this scale.
 
 Walking is the next task and is only half solved. The nominal controller already walks: a 2 Hz trot with
 0.15 rad of drum swing moves the dog forward at 0.05 m/s, so the job of the policy is to keep the gait
-stable and to track the commanded speed. A 300 k transition run with a fixed 0.05 m/s command learned to
-walk at 0.03 m/s with 0.86/4 feet in contact, but 38 % of the deterministic episodes ended in a fall.
-Two things make this harder than standing: the velocity reward needs a narrow sigma (`--velocity-sigma
-0.05`, the default 0.2 is so wide that standing still scores almost as well as walking), and the
-termination limits have to be forgiving enough that a stumble does not end the episode
-(`--terminate-height 0.10 --terminate-tilt 0.9`).
+stable and to track the commanded speed. A 1 M transition run (2,048 envs in MJX) with a 0.03-0.08 m/s
+command learned to track the speed well (0.08 m/s, error 0.06 m/s) and the return kept climbing, but the
+dog still collapses after about 3 s: 96 % of the episodes end in a fall, the trunk sinking to 0.10 m
+with a 0.33 rad tilt.
+
+What the runs suggest:
+
+- The velocity reward needs a narrow sigma. The default `--velocity-sigma 0.2` is so wide that standing
+  still scores 0.94 of the walking reward, and the policy learns to stand.
+- A gentler nominal gait (`--gait-amp 0.12`) and a smaller residual (`--residual-scale 0.15`) keep the
+  tilt down (0.027 rad vs 0.105 rad) but do not stop the collapse.
+- The mechanical authority is small: the tendon Jacobian is about 0.03 m of cable per radian of joint
+  angle, so the policy can only move the joints by a few degrees. Standing is well inside that range;
+  walking is not. A tendon routing or drum radius with more leverage (or a hip that is not passive) is
+  probably the real fix.
 
 ## Troubleshooting
 

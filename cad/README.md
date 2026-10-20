@@ -61,9 +61,16 @@ tendon 1 sits 30 mm past the knee, on a bracket (`kneeBracket`).
 Current exports are in `/home/daniel/Downloads/gradus_dog/`:
 
 - `gradus_dog.step` - STEP AP242, 25 solids
-- `gradus_dog.stl` - STL mesh
+- `gradus_dog.stl` - STL mesh (ASCII), 13,032 triangles, 510 x 294 x 310 mm
 - `gradus_dog_isometric.png` - shaded isometric view
 - `gradus_dog_front.png` - shaded front view
+
+Re-export them with `python -m cad.export_onshape` (credentials in `ONSHAPE_API`, `ONSHAPE_ACCESS_KEY`
+and `ONSHAPE_SECRET_KEY`). The script retries: Onshape sometimes leaves a translation in `ACTIVE` for
+minutes, answers 500 while it is busy, or fails outright during an outage (check
+<https://status.onshape.com/>). On 20 October 2026 the STEP and STL exports went through during an
+Onshape outage while the PNG exports kept failing, so the PNGs are exported separately when the service
+is healthy again.
 
 ## Notes
 
