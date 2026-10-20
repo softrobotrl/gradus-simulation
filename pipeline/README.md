@@ -75,6 +75,55 @@ python -m pipeline.validate_board_env pipeline/configs/opencr_tdcr_spatial.yaml 
 
 Everything about it (physics, observations, reward, settings, SAC usage, GPU setup on Windows via WSL2, how to extend) is in [BOARD_TASK.md](BOARD_TASK.md).
 
+## The Gradus dog
+
+`dog_model.py` builds the MJCF for the tendon-driven quadruped whose CAD lives in
+[../cad/](../cad/README.md) (one parametric Onshape FeatureScript generates the whole dog: body, four
+planar two-link legs, eight drums, eight tendons). `dog_env.py` turns that model into a residual-RL
+environment, and `validate_dog_env.py` checks it.
+
+```bash
+python -m pipeline.dog_model                # writes pipeline/build/gradus_dog/robot.xml
+python -m pipeline.validate_dog_env         # model + environment acceptance checks
+```
+
+The model:
+
+- four planar legs in X-Z planes, two links each, hip and knee are passive hinges;
+- two antagonistic tendons per leg (8 total), each a spatial tendon routed over three guides;
+- one position-servo drum per tendon, so the action is a drum angle in radians;
+- 4.0 kg total, feet on the ground at z = 0, trunk at z = 0.215 m.
+
+Tendon routing matters more than it looks. The tendon moment arms decide which joint each tendon can
+move, and if both tendons of a leg produce the same joint-torque direction the leg has a rank-1
+Jacobian and collapses. The offsets (in x, from the leg plane; front legs +, rear legs mirrored) are:
+
+| Tendon | Hip guide (= drum) | Knee guide | Foot anchor | Effect |
+|---|---|---|---|---|
+| 0 (red) | +30 mm | 0 mm (on the knee) | +30 mm | hip moment only |
+| 1 (blue) | -30 mm | +30 mm | -30 mm | knee moment, opposite hip moment |
+
+With these offsets every leg's 2x2 tendon Jacobian has determinant 6.6e-4 and condition number 1.9, and
+the dog stands on its own at z = 0.215 m with 20-30 N of tendon tension. The same numbers are in the CAD
+(`TENDON_GUIDES` in `dog_model.py`).
+
+The environment is a **residual** environment: a nominal controller (constant or PD on the drums) does
+the standing, and the policy only adds a residual on top of it.
+
+- Action: 8 numbers in [-1, 1] -> `drum angle = nominal + 0.25 * policy action`, filtered and rate
+  limited to 8 rad/s.
+- Observation (82): a 31-entry **state residual** (height, projected gravity, joint angles, joint
+  speeds, body velocity, tendon lengths), 22 entries of raw state (quaternion, velocities, tension, foot
+  contacts) and a 29-entry **action context** (nominal action, applied residual, previous action, gait
+  phase, command).
+- Reward: alive + height + upright + velocity + yaw + posture, minus tension, action-rate and residual
+  costs. The episode ends when the dog falls below 0.12 m or tilts more than 0.7 rad.
+
+The physics runs in plain C MuJoCo in CPU threads (`dog_env.py`), about 6,000 transitions/s with 64
+environments on this machine. The MJCF itself is written to stay MJX-compatible, but there is no MJX
+backend for the dog yet. Training and evaluation entry points are in [policy/](../policy/README.md):
+`python -m policy.train_dog_sac` and `python -m policy.play_dog_sac`.
+
 ## Pulling tendons by hand
 
 Open the model in the MuJoCo viewer (needs a display; works on WSLg):

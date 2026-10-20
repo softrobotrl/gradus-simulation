@@ -161,6 +161,40 @@ Laptop: RTX 4060 Laptop GPU + 20-core CPU, native Windows, C MuJoCo backend, ~3,
 
 v3's settings are now the training defaults: plain `python -m policy.train_sac` reproduces it.
 
+## The Gradus dog
+
+The same SAC trains the tendon-driven quadruped from [../cad/](../cad/README.md). The dog env is a
+**residual** env: a nominal controller (constant or PD on the eight tendon drums) holds the dog up and
+the policy only adds a small residual on top, so learning starts from a policy that already stands.
+
+```bash
+python -m pipeline.validate_dog_env                                        # checks the model and the env
+python -m policy.train_dog_sac --run-name stand --total-steps 200000        # train
+python -m policy.play_dog_sac logs/dog_sac/stand/checkpoints/best.pt        # evaluate
+python -m policy.play_dog_sac logs/dog_sac/stand/checkpoints/best.pt --view # watch it
+```
+
+| File | What's in it |
+|---|---|
+| [train_dog_sac.py](train_dog_sac.py) | Training loop for the dog. `DogTrainConfig` holds the env, reward and learner settings; every one is a CLI flag. |
+| [play_dog_sac.py](play_dog_sac.py) | Evaluate a dog checkpoint over many episodes, or watch one live in the viewer. |
+
+Two settings matter more than the rest, and both are in the defaults:
+
+- `--sac.action-cost` (10) puts an L2 penalty on the policy action in the actor loss. Without it the
+  policy drifts away from the nominal controller and the dog falls: the critic's estimate of the
+  long-horizon value is poor early on, so the actor follows critic errors. With the penalty the policy
+  stays near the nominal action until the critic is accurate.
+- `--sac.init-log-std` (-1) starts the policy with a spread of 0.37 instead of 1.0. A residual of
+  0.5 rad per step (the default scale) is enough to make a 4 kg dog with two-link legs fall over, so
+  wide exploration samples mostly failures and the critic never sees the good states.
+
+Result so far (50 k transitions, 64 envs, 4 s episodes, RTX 3070 + 20-core CPU): the policy stands for
+the full episode, 0 % failures, final height 0.215 m, tilt 0.003 rad, all four feet in contact, and the
+stochastic (exploring) policy scores the same as the deterministic one, so the exploration noise is
+harmless at this scale. Walking is the next task: use `--command-mode velocity` with a lower
+`--sac.action-cost` and a bigger `--residual-scale`, otherwise the penalty keeps the legs still.
+
 ## Troubleshooting
 
 | Problem | Try |

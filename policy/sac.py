@@ -31,6 +31,8 @@ class SACHyperparams:
     critic_lr: float = 3e-4
     alpha_lr: float = 3e-4
     init_alpha: float = 0.1      # starting entropy temperature (tuned automatically from there)
+    init_log_std: float = 0.0    # initial policy log-std; 0 = std 1, -1 = std 0.37 (gentler exploration)
+    action_cost: float = 0.0     # L2 penalty on the policy action; >0 keeps a residual policy near the nominal
     hidden: int = 256            # width of every hidden layer
     layers: int = 2              # hidden layers per network
     grad_clip: float = 10.0      # max gradient norm per network (guards against rare huge updates)
@@ -72,9 +74,11 @@ class ObsNormalizer(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden: int, layers: int):
+    def __init__(self, obs_dim: int, act_dim: int, hidden: int, layers: int, init_log_std: float = 0.0):
         super().__init__()
         self.net = mlp(obs_dim, 2 * act_dim, hidden, layers)  # outputs mean and log-std per action
+        with torch.no_grad():  # start with the requested exploration spread (std = exp(init_log_std))
+            self.net[-1].bias[act_dim:] = init_log_std
 
     def forward(self, obs: torch.Tensor, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns (action in [-1, 1], log-probability of that action)."""
@@ -107,7 +111,7 @@ class SAC:
     def __init__(self, obs_dim: int, act_dim: int, hp: SACHyperparams, device: str | torch.device):
         self.hp, self.device = hp, torch.device(device)
         self.normalizer = ObsNormalizer(obs_dim).to(self.device)
-        self.actor = Actor(obs_dim, act_dim, hp.hidden, hp.layers).to(self.device)
+        self.actor = Actor(obs_dim, act_dim, hp.hidden, hp.layers, hp.init_log_std).to(self.device)
         self.critic = Critic(obs_dim, act_dim, hp.hidden, hp.layers).to(self.device)
         self.critic_target = copy.deepcopy(self.critic).requires_grad_(False)
         self.log_alpha = torch.tensor(math.log(hp.init_alpha), device=self.device, requires_grad=True)
@@ -146,7 +150,7 @@ class SAC:
         self.critic.requires_grad_(False)  # the actor loss must not change the critic
         action, log_prob = self.actor(obs)
         q_pi = torch.min(*self.critic(obs, action))
-        actor_loss = (alpha * log_prob - q_pi).mean()
+        actor_loss = (alpha * log_prob - q_pi).mean() + self.hp.action_cost * action.square().mean()
         self._step(self.actor_opt, actor_loss, self.actor)
         self.critic.requires_grad_(True)
 

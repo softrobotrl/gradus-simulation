@@ -1,0 +1,34 @@
+{
+  "source": {
+    "onshape_document": "https://cad.onshape.com/documents/571fbc8ad90a7eae9bfbfe7d/w/9f460e6d3cdf15497dabf0e2/e/4c3aaa530142f1870800c037",
+    "document_id": "571fbc8ad90a7eae9bfbfe7d",
+    "workspace_id": "9f460e6d3cdf15497dabf0e2",
+    "leg_assembly_element": "d69fc4402fbb455cc35cb1ce",
+    "s1_assembly_element": "8542b08048313c4c0655dac9",
+    "s2_assembly_element": "2347be89b08d6d8bf1e03f3a",
+    "backbone_element": "4c3aaa530142f1870800c037",
+    "note": "Onshape geometry export requires an authenticated API session; these parameters were recovered from the public part-studio feature trees and BOMs."
+  },
+  "design": {
+    "links_per_section": 8,
+    "sections": 2,
+    "total_link_count": 16,
+    "joint_pitch_m": 0.03125,
+    "ball_diameter_m": 0.024,
+    "disk_thickness_m": 0.010,
+    "s1_disk_diameter_m": 0.090,
+    "s2_disk_diameter_m": 0.070,
+    "cable_hole_diameter_m": 0.004,
+    "cable_hole_count": 4,
+    "s1_cable_pitch_radius_m": 0.0375,
+    "s2_cable_pitch_radius_m": 0.029166666666666667,
+    "backbone_diameter_m": 0.030,
+    "backbone_length_m": 0.500
+  },
+  "derived": {
+    "s1_cable_pitch_radius_rule": "S1DiskDiameter / 2.4",
+    "s2_cable_pitch_radius_rule": "DiskDiameter / 2.4",
+    "s2_radius_rule": "DiskDiameter / 1.2",
+    "total_nominal_length_m": 0.5
+  }
+}

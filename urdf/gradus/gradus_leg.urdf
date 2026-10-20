@@ -1,0 +1,535 @@
+<?xml version="1.0"?>
+<robot name="gradus_leg">
+  <link name="base">
+    <inertial>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <mass value="0.2"/>
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.00025"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.06"/></geometry>
+      <material name="base_mat"><color rgba="0.2 0.2 0.22 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.06"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_0">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_0_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_0_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_1">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_1_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_1_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_2">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_2_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_2_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_3">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_3_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_3_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_4">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_4_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_4_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_5">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_5_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_5_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_6">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_6_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_6_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_7">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.055000"/>
+      <inertia ixx="2.83020833e-05" ixy="0" ixz="0" iyy="2.83020833e-05" iyz="0" izz="5.56875000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+      <material name="disk_7_mat"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_7_strut"><color rgba="0.36 0.55 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_8">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_8_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_8_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_9">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_9_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_9_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_10">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_10_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_10_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_11">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_11_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_11_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_12">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_12_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_12_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_13">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_13_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_13_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_14">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_14_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_14_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <link name="disk_15">
+    <inertial>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <mass value="0.040000"/>
+      <inertia ixx="1.25833333e-05" ixy="0" ixz="0" iyy="1.25833333e-05" iyz="0" izz="2.45000000e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+      <material name="disk_15_mat"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.012" length="0.031250"/></geometry>
+      <material name="disk_15_strut"><color rgba="0.62 0.65 0.68 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035000" length="0.010000"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="joint_0" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="base"/>
+    <child link="disk_0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_1" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_0"/>
+    <child link="disk_1"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_2" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_1"/>
+    <child link="disk_2"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_3" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_2"/>
+    <child link="disk_3"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_4" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_3"/>
+    <child link="disk_4"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_5" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_4"/>
+    <child link="disk_5"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_6" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_5"/>
+    <child link="disk_6"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_7" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_6"/>
+    <child link="disk_7"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_8" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_7"/>
+    <child link="disk_8"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_9" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_8"/>
+    <child link="disk_9"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_10" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_9"/>
+    <child link="disk_10"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_11" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_10"/>
+    <child link="disk_11"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_12" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_11"/>
+    <child link="disk_12"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_13" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_12"/>
+    <child link="disk_13"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_14" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_13"/>
+    <child link="disk_14"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="joint_15" type="revolute">
+    <origin xyz="0 0 -0.031250" rpy="0 0 0"/>
+    <parent link="disk_14"/>
+    <child link="disk_15"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.75" upper="1.75" effort="500" velocity="10"/>
+    <dynamics damping="0.002" friction="0"/>
+  </joint>
+
+  <joint name="foot_joint" type="fixed">
+    <origin xyz="0 0 -0.015625" rpy="0 0 0"/>
+    <parent link="disk_15"/>
+    <child link="foot"/>
+  </joint>
+  <link name="foot">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.03"/>
+      <inertia ixx="1.0e-5" ixy="0" ixz="0" iyy="1.0e-5" iyz="0" izz="1.0e-5"/>
+    </inertial>
+    <visual>
+      <geometry><sphere radius="0.018"/></geometry>
+      <material name="foot_mat"><color rgba="0.1 0.1 0.1 1"/></material>
+    </visual>
+    <collision>
+      <geometry><sphere radius="0.018"/></geometry>
+    </collision>
+  </link>
+</robot>
