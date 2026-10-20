@@ -17,7 +17,7 @@ The Part Studio contains one custom feature, `Gradus Dog` (`gradusDog`). The des
 ## Design
 
 - Body shell: 300 x 160 x 80 mm, centered at `(0, 0, 215)` mm.
-- Overall bounding box: 510 x 294 x 310 mm including snout, tail, feet, drums and tendons.
+- Overall bounding box: 510 x 316 x 310 mm including snout, tail, feet, drums, gearboxes and tendons.
 - Four planar two-link legs in X-Z planes at `y = +/-105` mm.
 - Hips at `x = +/-100`, `y = +/-105`, `z = 175` mm; feet at `z = 15` mm with 15 mm radius.
 - Thigh length ~72 mm; calf length ~104 mm.
@@ -26,8 +26,8 @@ The Part Studio contains one custom feature, `Gradus Dog` (`gradusDog`). The des
 - Two antagonistic tendons per leg, eight total.
 - Two tendon drums per leg, eight total, one per tendon.
 - Tendon path: drum -> hip guide -> knee guide -> foot anchor.
-- 25 solid bodies:
-  - 1 merged body/shell (body, head, snout, ears, tail, top plate, hip forks, drum plates, guides)
+- 33 solid bodies:
+  - 1 merged body/shell (body, head, snout, ears, tail, top plate, hip forks, drum plates, guides, gearboxes)
   - 4 thighs
   - 4 calves
   - 8 drums
@@ -37,7 +37,7 @@ The geometry is a concept/model, not manufacturing-ready. It intentionally omits
 fastener details, tendon termination details, and a real servo package. The external hardware team can
 replace or refine those later.
 
-## Tendon routing
+## Tendon drive
 
 Each tendon runs over three guides, all offset in x from the leg plane. The offsets differ per tendon,
 because a tendon that passes through both joints produces the same joint-torque direction as its
@@ -45,16 +45,27 @@ antagonist: the leg then has a rank-1 tendon Jacobian and cannot hold itself up.
 
 | Tendon | Hip guide (= drum) | Knee guide | Foot anchor | Effect |
 |---|---|---|---|---|
-| 0 (red) | +30 mm | 0 mm (on the knee) | +30 mm | hip moment only |
-| 1 (blue) | -30 mm | +30 mm | -30 mm | knee moment, opposite hip moment |
+| 0 (red) | +45 mm | 0 mm (on the knee) | +45 mm | hip moment only |
+| 1 (blue) | -45 mm | +45 mm | -45 mm | knee moment, opposite hip moment |
 
 Front legs take the offsets in +x, rear legs mirror them in x. The offsets are the same ones the
 simulation uses (`TENDON_GUIDES` in `pipeline/dog_model.py`), so the CAD and the MuJoCo model describe the
-same mechanism. With these offsets the 2x2 tendon Jacobian of every leg has determinant 6.6e-4 and
-condition number 1.9, and the dog stands in simulation.
+same mechanism. With these offsets the 2x2 tendon Jacobian of every leg has determinant 1.3e-3 and
+condition number 2.0, and the dog stands in simulation.
 
-The foot anchor sits 30 mm beside the foot, carried by a short arm (`anchorArm`); the knee guide of
-tendon 1 sits 30 mm past the knee, on a bracket (`kneeBracket`).
+The offset is also the **moment arm** of the drive: the joint torque is the cable tension times the
+offset, so the offsets set how much torque the drum can put into the joint. 30 mm was enough to stand
+but not to walk - the knee tendon saturated at 22 N of its 35 N limit mid-stride and the leg buckled.
+45 mm gives the drive about 1.5x the torque per newton of cable and lets the open-loop trot walk at
+0.12 m/s without falling.
+
+Each drum is 12 mm in radius and is driven through a 2:1 gearbox (the can behind the drum), so the
+motor only has to deliver 0.25 N*m to get 0.5 N*m at the drum and 42 N of cable tension. That is the
+other half of the fix: with the old 0.35 N*m direct drive the knee tendon was at 62 % of its limit while
+standing and saturated as soon as the dog moved.
+
+The foot anchor sits 45 mm beside the foot, carried by a short arm (`anchorArm`); the knee guide of
+tendon 1 sits 45 mm past the knee, on a bracket (`kneeBracket`).
 
 ## Exports
 

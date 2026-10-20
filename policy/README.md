@@ -194,28 +194,28 @@ Two settings matter more than the rest, and both are in the defaults:
   0.5 rad per step (the default scale) is enough to make a 4 kg dog with two-link legs fall over, so
   wide exploration samples mostly failures and the critic never sees the good states.
 
-Result so far (50 k transitions, 64 envs, 4 s episodes, RTX 3070 + 20-core CPU): the policy stands for
-the full episode, 0 % failures, final height 0.215 m, tilt 0.003 rad, all four feet in contact, and the
+Result so far (2 M transitions, 2,048 envs in MJX, 8 s episodes, RTX 3070): the policy stands for the
+full episode, 0 % failures, final height 0.215 m, tilt 0.002 rad, all four feet in contact, and the
 stochastic (exploring) policy scores the same as the deterministic one, so the exploration noise is
 harmless at this scale.
 
-Walking is the next task and is only half solved. The nominal controller already walks: a 2 Hz trot with
-0.15 rad of drum swing moves the dog forward at 0.05 m/s, so the job of the policy is to keep the gait
-stable and to track the commanded speed. A 1 M transition run (2,048 envs in MJX) with a 0.03-0.08 m/s
-command learned to track the speed well (0.08 m/s, error 0.06 m/s) and the return kept climbing, but the
-dog still collapses after about 3 s: 96 % of the episodes end in a fall, the trunk sinking to 0.10 m
-with a 0.33 rad tilt.
+Walking works too, once the drive has enough authority. The nominal controller walks on its own: a 3 Hz
+trot with 0.32 rad of drum swing moves the dog forward at 0.12 m/s. The policy's job is to keep that gait
+stable and to track the commanded speed. A 2 M transition run with a 0.02-0.12 m/s command ends with the
+dog walking at 0.04 m/s, a 4 % failure rate (deterministic) and 0 % (stochastic), 0.08 rad of tilt and
+0.20 m of body height.
 
 What the runs suggest:
 
 - The velocity reward needs a narrow sigma. The default `--velocity-sigma 0.2` is so wide that standing
   still scores 0.94 of the walking reward, and the policy learns to stand.
-- A gentler nominal gait (`--gait-amp 0.12`) and a smaller residual (`--residual-scale 0.15`) keep the
-  tilt down (0.027 rad vs 0.105 rad) but do not stop the collapse.
-- The mechanical authority is small: the tendon Jacobian is about 0.03 m of cable per radian of joint
-  angle, so the policy can only move the joints by a few degrees. Standing is well inside that range;
-  walking is not. A tendon routing or drum radius with more leverage (or a hip that is not passive) is
-  probably the real fix.
+- The policy leans forward to go faster, so the upright reward has to be worth more than the extra
+  speed: `--upright-reward 1.0 --upright-sigma 0.15` still lets the tilt grow to 0.38 rad before the
+  critic catches up.
+- The drive has to have authority. With the old 30 mm tendon offsets the knee tendon saturated at 22 N
+  of 35 N while standing, and every walk ended with the leg buckling. 45 mm offsets and a 2:1 gearbox
+  (0.5 N*m at the drum, 42 N of tension) are what made walking possible - see
+  [../cad/README.md](../cad/README.md#tendon-drive).
 
 ## Troubleshooting
 

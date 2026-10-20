@@ -67,9 +67,16 @@ LEGS: tuple[LegSpec, ...] = (
 # tendons produced the same joint-torque direction), so the leg could not hold
 # itself up.  This routing gives tendon 0 a hip moment and tendon 1 a knee
 # moment, making the 2x2 map well conditioned.  Rear legs mirror the x offsets.
+#
+# The offsets are the moment arms of the tendon drive: the joint torque is the
+# cable tension times the offset, so they set how much torque the drum can
+# produce at the joint.  30 mm was enough to stand but not to walk: the knee
+# tendon saturated at 22 N of the 35 N limit and the leg buckled mid-stride.
+# 45 mm roughly doubles the usable torque per newton of cable and the open-loop
+# trot walks at 0.12 m/s without falling (see pipeline/README.md).
 TENDON_GUIDES = (
-    (0.030, 0.000, 0.030),   # t0 (red): mostly hip
-    (-0.030, 0.030, -0.030), # t1 (blue): mostly knee, opposite hip
+    (0.045, 0.000, 0.045),   # t0 (red): mostly hip
+    (-0.045, 0.045, -0.045), # t1 (blue): mostly knee, opposite hip
 )
 
 
@@ -82,19 +89,24 @@ class DogModelConfig:
     team provides real parts.
     """
 
+    # Tendon routing: per-tendon x offsets of the hip guide, the knee guide and
+    # the foot anchor, in metres.  Front legs take them in +x, rear legs mirror
+    # them.  These must match the CAD (cad/gradus_dog.fs).
+    tendon_guides: tuple[tuple[float, float, float], ...] = TENDON_GUIDES
+
     trunk_mass: float = 3.0       # kg, shell + battery + electronics; ASSUMED
     thigh_mass: float = 0.12      # kg, per thigh; ASSUMED (PLA + insert)
     calf_mass: float = 0.08       # kg, per calf tube; ASSUMED
     foot_mass: float = 0.04       # kg, per foot sphere; ASSUMED
     carriage_mass: float = 0.005  # kg, per drum carriage proxy; ASSUMED
-    drum_radius: float = 0.010    # m, CAD drum radius
-    rotor_inertia: float = 1.0e-5 # kg*m^2 at the drum; ASSUMED
-    gear_ratio: float = 1.0       # motor turns per drum turn; ASSUMED direct drive
-    max_torque: float = 0.35      # N*m at the drum; ASSUMED
+    drum_radius: float = 0.012    # m, CAD drum radius
+    rotor_inertia: float = 1.0e-5 # kg*m^2 at the motor; ASSUMED
+    gear_ratio: float = 2.0       # motor turns per drum turn; ASSUMED 2:1 winch gearbox
+    motor_torque: float = 0.25    # N*m at the motor; ASSUMED
+    motor_max_speed: float = 16.0 # rad/s at the motor; ASSUMED
     kp: float = 2.0               # position servo P gain (actuator units)
     kv: float = 0.05              # position servo D gain (actuator units)
     angle_range: tuple[float, float] = (-0.8, 2.0)  # rad at the drum
-    max_speed: float = 10.0       # rad/s at the drum, enforced by the env
     joint_damping: float = 0.02   # N*m*s/rad, passive hip/knee
     joint_armature: float = 1.0e-4
     joint_frictionloss: float = 0.005
@@ -104,6 +116,16 @@ class DogModelConfig:
     timestep: float = 0.001
     contact_timeconst: float = 0.005
     ground_friction: float = 1.0
+
+    @property
+    def max_torque(self) -> float:
+        """Torque the drum can deliver (N*m): the motor torque through the gearbox."""
+        return self.motor_torque * self.gear_ratio
+
+    @property
+    def max_speed(self) -> float:
+        """Drum speed limit (rad/s): the motor speed divided by the gearbox."""
+        return self.motor_max_speed / self.gear_ratio
 
     @property
     def reflected_inertia(self) -> float:
@@ -142,7 +164,7 @@ def _leg_x_sign(leg: LegSpec) -> float:
 def _drum_center(leg: LegSpec, hip_offset: float) -> np.ndarray:
     return np.array([leg.hip[0] + _leg_x_sign(leg) * hip_offset,
                      leg.hip[1] + leg.side * 0.030,
-                     leg.hip[2] + 0.040 - TRUNK_Z])
+                     leg.hip[2] + 0.044 - TRUNK_Z])
 
 
 def _hip_guide(leg: LegSpec, hip_offset: float) -> np.ndarray:
@@ -255,8 +277,8 @@ def build_xml(cfg: DogModelConfig = DogModelConfig()) -> ET.Element:
                               leg.hip[0], leg.hip[1] + leg.side * 0.028, leg.hip[2] - TRUNK_Z),
                              0.005, "0.55 0.57 0.60 1")
         _add_visual_box(trunk, f"{leg.name}_drumPlate_vis",
-                        (leg.hip[0], leg.hip[1] + leg.side * 0.0225, leg.hip[2] + 0.040 - TRUNK_Z),
-                        (0.035, 0.0025, 0.016), "0.16 0.17 0.19 1")
+                        (leg.hip[0], leg.hip[1] + leg.side * 0.0225, leg.hip[2] + 0.044 - TRUNK_Z),
+                        (0.059, 0.0025, 0.020), "0.16 0.17 0.19 1")
 
         thigh = _sub(trunk, "body", name=f"{leg.name}_thigh", pos=f(hip_rel))
         _sub(thigh, "joint", name=f"{leg.name}_hip", type="hinge", axis="0 1 0",
@@ -284,7 +306,7 @@ def build_xml(cfg: DogModelConfig = DogModelConfig()) -> ET.Element:
              friction=f"{cfg.ground_friction:.6g} 0.005 0.0001", solref=f"{cfg.contact_timeconst:.6g} 1",
              condim="3")
 
-        for k, (hip_offset, knee_offset, foot_offset) in enumerate(TENDON_GUIDES):
+        for k, (hip_offset, knee_offset, foot_offset) in enumerate(cfg.tendon_guides):
             color = "red" if k == 0 else "blue"
             drum = _drum_center(leg, hip_offset)
             hip_guide = _hip_guide(leg, hip_offset)
@@ -315,9 +337,15 @@ def build_xml(cfg: DogModelConfig = DogModelConfig()) -> ET.Element:
 
             # Drum graphic and carriage proxy.
             _sub(trunk, "geom", name=f"{leg.name}_t{k}_drum_vis", type="cylinder",
-                 fromto=f((drum[0], leg.hip[1] + leg.side * 0.022, drum[2],
-                           drum[0], leg.hip[1] + leg.side * 0.042, drum[2])),
-                 size="0.010", mass="0", rgba="0.85 0.12 0.12 1" if k == 0 else "0.12 0.35 0.85 1",
+                 fromto=f((drum[0], leg.hip[1] + leg.side * 0.023, drum[2],
+                           drum[0], leg.hip[1] + leg.side * 0.037, drum[2])),
+                 size=f"{cfg.drum_radius:.6g}", mass="0", rgba="0.85 0.12 0.12 1" if k == 0 else "0.12 0.35 0.85 1",
+                 contype="0", conaffinity="0")
+            # Gearbox can behind the drum (the winch reduction lives here).
+            _sub(trunk, "geom", name=f"{leg.name}_t{k}_gearbox_vis", type="cylinder",
+                 fromto=f((drum[0], leg.hip[1] + leg.side * 0.046, drum[2],
+                           drum[0], leg.hip[1] + leg.side * 0.060, drum[2])),
+                 size=f"{cfg.drum_radius * 0.95:.6g}", mass="0", rgba="0.55 0.57 0.60 1",
                  contype="0", conaffinity="0")
             carriage = _sub(trunk, "body", name=f"{leg.name}_t{k}_carriage", pos=f(drum))
             _sub(carriage, "joint", name=f"{leg.name}_t{k}_cable", type="slide", axis=f(axis),
@@ -384,6 +412,10 @@ def build_dog_xml(out: str | Path = DEFAULT_OUT, cfg: DogModelConfig = DogModelC
         "tendon_rest_length_m": [round(v, 6) for v in lengths],
         "drum_radius_m": cfg.drum_radius,
         "max_tension_N": cfg.max_tension,
+        "drum_torque_Nm": cfg.max_torque,
+        "drum_speed_rad_s": cfg.max_speed,
+        "gear_ratio": cfg.gear_ratio,
+        "tendon_guides_m": [list(g) for g in cfg.tendon_guides],
     }
     (out / "model_info.yaml").write_text(yaml.safe_dump(report, sort_keys=False))
     print(yaml.safe_dump(report, sort_keys=False))

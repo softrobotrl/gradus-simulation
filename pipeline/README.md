@@ -100,12 +100,18 @@ Jacobian and collapses. The offsets (in x, from the leg plane; front legs +, rea
 
 | Tendon | Hip guide (= drum) | Knee guide | Foot anchor | Effect |
 |---|---|---|---|---|
-| 0 (red) | +30 mm | 0 mm (on the knee) | +30 mm | hip moment only |
-| 1 (blue) | -30 mm | +30 mm | -30 mm | knee moment, opposite hip moment |
+| 0 (red) | +45 mm | 0 mm (on the knee) | +45 mm | hip moment only |
+| 1 (blue) | -45 mm | +45 mm | -45 mm | knee moment, opposite hip moment |
 
-With these offsets every leg's 2x2 tendon Jacobian has determinant 6.6e-4 and condition number 1.9, and
-the dog stands on its own at z = 0.215 m with 20-30 N of tendon tension. The same numbers are in the CAD
+With these offsets every leg's 2x2 tendon Jacobian has determinant 1.3e-3 and condition number 2.0, and
+the dog stands on its own at z = 0.215 m with about 10 N of tendon tension. The same numbers are in the CAD
 (`TENDON_GUIDES` in `dog_model.py`).
+
+The offset is also the moment arm of the drive, so it sets how much torque the drum can put into the
+joint. 30 mm was enough to stand but not to walk: the knee tendon saturated at 22 N of its 35 N limit
+mid-stride and the leg buckled. 45 mm plus a 2:1 gearbox behind each drum (0.5 N*m at the drum, 42 N of
+cable tension) gives the leg enough authority to walk, and the open-loop trot at 3 Hz walks at 0.12 m/s
+without falling.
 
 The environment is a **residual** environment: a nominal controller (constant or PD on the drums) does
 the standing, and the policy only adds a residual on top of it.

@@ -98,6 +98,11 @@ class JAXDogEnv:
         self.ctrl_high = jp.array(m.actuator_ctrlrange[:, 1])
         self.q0 = jp.zeros(len(HINGE_NAMES))
         self.tendon_rest = jp.array(m.tendon_range[:, 1])
+        # Drum geometry and the tension limit come from the model: the actuator
+        # gear is 1/drum_radius, and the actuator force limit times that gear is
+        # the cable tension limit.
+        self.drum_radius = float(1.0 / m.actuator_gear[0, 0])
+        self.max_tension = float(m.actuator_forcerange[0, 1] * m.actuator_gear[0, 0])
 
         # Constant tendon Jacobian at the stand pose, per leg: rows = tendons, cols = joints.
         self.Jleg = jp.array(_tendon_jacobian(m, np.asarray(self.hinge_qpos)))
@@ -130,7 +135,7 @@ class JAXDogEnv:
         if cfg.nominal_mode == "pd":
             dq = cfg.kp_q * (self.q0 - q) - cfg.kd_q * qd
             d_l = jp.einsum("lij,lj->li", self.Jleg, dq.reshape(4, 2))
-            base = base + d_l.reshape(self.num_actions) / cfg.drum_radius
+            base = base + d_l.reshape(self.num_actions) / self.drum_radius
         return jp.clip(base, self.ctrl_low, self.ctrl_high)
 
     # ----- state helpers -----
@@ -156,7 +161,7 @@ class JAXDogEnv:
         v_world = qvel[self.root_dof:self.root_dof + 3]
         v_body = R.T @ v_world
         w_body = qvel[self.root_dof + 3:self.root_dof + 6]
-        tension = data.actuator_force / cfg.drum_radius
+        tension = data.actuator_force / self.drum_radius
         velocity_residual = jp.concatenate([v_body[:2] - command[:2], w_body[2:3] - command[2:3]])
         state_residual = jp.concatenate([
             (qpos[2] - cfg.height_target)[None],
@@ -170,7 +175,7 @@ class JAXDogEnv:
             qpos[3:7],
             v_body,
             w_body,
-            tension / cfg.max_tension,
+            tension / self.max_tension,
             self._foot_contacts(data),
         ])
         phase_sc = jp.stack([jp.sin(phase), jp.cos(phase)])
@@ -200,7 +205,7 @@ class JAXDogEnv:
         velocity = jp.exp(-vel_err / cfg.velocity_sigma**2)
         yaw = jp.exp(-yaw_err / cfg.yaw_sigma**2)
         posture = jp.exp(-jp.mean(jp.square(q)) / cfg.posture_sigma**2)
-        tension_norm = (data.actuator_force / cfg.drum_radius) / cfg.max_tension
+        tension_norm = (data.actuator_force / self.drum_radius) / self.max_tension
         tension_cost = jp.mean(jp.square(tension_norm))
         rate = jp.mean(jp.square((target - prev_target) / self.max_step))
         residual = jp.mean(jp.square(action))
@@ -265,7 +270,7 @@ class JAXDogEnv:
         phase = (jax.random.uniform(k_p, (), minval=0.0, maxval=2 * math.pi) if cfg.gait_hz else 0.0)
 
         nominal = self.nominal_angles(qpos[self.hinge_qpos], qvel[self.hinge_dof], phase)
-        qpos = qpos.at[self.cable_qpos].set(cfg.drum_radius * nominal)
+        qpos = qpos.at[self.cable_qpos].set(self.drum_radius * nominal)
         data = mjx.forward(self.mx, mjx.make_data(self.mx).replace(qpos=qpos, qvel=qvel, ctrl=nominal))
 
         zero = jp.zeros(())

@@ -129,9 +129,7 @@ class DogEnvConfig:
     kd_q: float = 0.01                    # joint-space damping gain
     residual_scale: float = 0.250          # rad of drum angle per unit policy action
     action_filter: float = 0.50           # first-order servo response per control step
-    max_speed: float = 8.0                # rad/s at the drum, rate limit
-    drum_radius: float = 0.010            # m, must match the model
-    max_tension: float = 35.0             # N, for observation normalization
+    max_speed: float = 8.0                # rad/s at the drum, rate limit (must match the model)
 
     # Reward
     alive_reward: float = 1.0
@@ -235,7 +233,11 @@ class DogEnv:
         self.max_step = config.max_speed * config.control_dt
         self.tendon_rest = m.tendon_range[:, 1].copy()
         self.q0 = np.zeros(len(HINGE_NAMES), dtype=np.float64)
-        self.max_tension = float(config.max_tension)
+        # The drum geometry and the tension limit come from the model, not from a
+        # copy in the config: the actuator gear is 1/drum_radius and the actuator
+        # force limit times that gear is the cable tension limit.
+        self.drum_radius = float(1.0 / m.actuator_gear[0, 0])
+        self.max_tension = float(m.actuator_forcerange[0, 1] * m.actuator_gear[0, 0])
 
         # Constant tendon Jacobian at the stand pose, per leg: rows = tendons, cols = joints.
         self.Jleg = self._tendon_jacobian()
@@ -381,7 +383,7 @@ class DogEnv:
         if self.cfg.nominal_mode == "pd":
             dq = self.cfg.kp_q * (self.q0[None, :] - q) - self.cfg.kd_q * qd
             d_l = np.einsum("lij,nlj->nli", self.Jleg, dq.reshape(n, 4, 2))
-            base += d_l.reshape(n, self.num_actions) / self.cfg.drum_radius
+            base += d_l.reshape(n, self.num_actions) / self.drum_radius
         return np.clip(base, self.ctrl_low[None, :], self.ctrl_high[None, :]).astype(np.float32)
 
     def _state(self, idx: np.ndarray) -> dict[str, np.ndarray]:
@@ -395,7 +397,7 @@ class DogEnv:
         v_world = qvel[:, self.root_dof:self.root_dof + 3].astype(np.float64)
         v_body = np.einsum("nij,nj->ni", R.transpose(0, 2, 1), v_world)
         w_body = qvel[:, self.root_dof + 3:self.root_dof + 6].astype(np.float64)
-        tension = b.actuator_force[idx].astype(np.float64) / self.cfg.drum_radius
+        tension = b.actuator_force[idx].astype(np.float64) / self.drum_radius
         return {
             "qpos": qpos, "qvel": qvel, "q": q, "qd": qd, "R": R,
             "gravity": gravity, "v_body": v_body, "w_body": w_body,
@@ -510,7 +512,7 @@ class DogEnv:
         phase = self.rng.uniform(0, 2 * math.pi, n) if cfg.gait_hz else np.zeros(n)
 
         nominal = self._nominal_angles(qpos[:, self.hinge_qpos], qvel[:, self.hinge_dof], phase)
-        qpos[:, self.cable_qpos] = self.cfg.drum_radius * nominal
+        qpos[:, self.cable_qpos] = self.drum_radius * nominal
 
         self.t[idx] = 0
         self.command[idx] = command

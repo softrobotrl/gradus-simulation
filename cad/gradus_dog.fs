@@ -103,8 +103,9 @@ function addLeg(context is Context, id is Id, hip is Vector, knee is Vector, foo
     bodyParts = append(bodyParts, addCylinder(context, id + "hipBolt", vector(x, y - side * 28 * millimeter, z), vector(x, y + side * 28 * millimeter, z), 5 * millimeter, metalCol));
 
     // Two tendon drums per leg. The hip is a passive pivot; the two tendons
-    // are the only leg actuators (2 per leg, 8 total).
-    bodyParts = append(bodyParts, addBox(context, id + "drumPlate", vector(x, y + side * 22.5 * millimeter, z + 40 * millimeter), vector(70, 5, 32) * millimeter, darkCol));
+    // are the only leg actuators (2 per leg, 8 total).  The plate carries the
+    // two drums 90 mm apart, one on each side of the hip.
+    bodyParts = append(bodyParts, addBox(context, id + "drumPlate", vector(x, y + side * 22.5 * millimeter, z + 44 * millimeter), vector(118, 5, 40) * millimeter, darkCol));
 
     for (var i = 0; i < 2; i += 1)
     {
@@ -113,30 +114,45 @@ function addLeg(context is Context, id is Id, hip is Vector, knee is Vector, foo
         // both produce the same joint-torque direction and the leg cannot hold
         // itself up.  Tendon 0 runs past the knee (hip moment only), tendon 1 is
         // anchored beside it (knee moment with the opposite hip moment).
-        const hipOffset = (i == 0) ? (30 * millimeter) : (-30 * millimeter);
-        const kneeOffset = (i == 0) ? (0 * millimeter) : (30 * millimeter);
-        const footOffset = (i == 0) ? (30 * millimeter) : (-30 * millimeter);
+        //
+        // The offset is the moment arm of the tendon: the joint torque is the
+        // cable tension times the offset.  30 mm was enough to stand but the
+        // knee tendon saturated while walking and the leg buckled, so the
+        // guides sit 45 mm out.  These numbers match the simulation
+        // (TENDON_GUIDES in pipeline/dog_model.py).
+        const hipOffsetMm = (i == 0) ? 45 : -45;
+        const kneeOffsetMm = (i == 0) ? 0 : 45;
+        const footOffsetMm = (i == 0) ? 45 : -45;
+        const hipOffset = hipOffsetMm * millimeter;
+        const kneeOffset = kneeOffsetMm * millimeter;
+        const footOffset = footOffsetMm * millimeter;
         const tendonCol = (i == 0) ? redCol : blueCol;
         const drumX = x + xSign * hipOffset;
         const drumY = y + side * 30 * millimeter;
-        const drumZ = z + 40 * millimeter;
+        const drumZ = z + 44 * millimeter;
         const drumCenter = vector(drumX, drumY, drumZ);
         const hipGuide = vector(drumX, y, z);
 
         // Guide bar at the hip.
         bodyParts = append(bodyParts, addCylinder(context, id + ("hipGuide" ~ i), vector(drumX, y - side * 22 * millimeter, z), vector(drumX, y + side * 22 * millimeter, z), 4 * millimeter, metalCol));
 
-        // Drum + axle, one body per tendon.
+        // Drum (12 mm radius) + axle, one body per tendon.
         var drumParts = [];
-        drumParts = append(drumParts, addCylinder(context, id + ("drum" ~ i), vector(drumX, drumY - side * 7 * millimeter, drumZ), vector(drumX, drumY + side * 7 * millimeter, drumZ), 10 * millimeter, tendonCol));
-        drumParts = append(drumParts, addCylinder(context, id + ("drumAxle" ~ i), vector(drumX, y + side * 22 * millimeter, drumZ), vector(drumX, y + side * 42 * millimeter, drumZ), 2 * millimeter, metalCol));
+        drumParts = append(drumParts, addCylinder(context, id + ("drum" ~ i), vector(drumX, drumY - side * 7 * millimeter, drumZ), vector(drumX, drumY + side * 7 * millimeter, drumZ), 12 * millimeter, tendonCol));
+        drumParts = append(drumParts, addCylinder(context, id + ("drumAxle" ~ i), vector(drumX, y + side * 22 * millimeter, drumZ), vector(drumX, y + side * 46 * millimeter, drumZ), 2 * millimeter, metalCol));
         mergeBodies(context, id + ("drumMerge" ~ i), drumParts, tendonCol);
+
+        // Gearbox can behind the drum.  The winch reduces 2:1, so the motor has
+        // to deliver 0.25 N*m to get 0.5 N*m at the drum: that is what keeps
+        // the knee tendon from saturating while the dog walks.
+        bodyParts = append(bodyParts, addCylinder(context, id + ("gearbox" ~ i), vector(drumX, y + side * 46 * millimeter, drumZ), vector(drumX, y + side * 60 * millimeter, drumZ), 11.5 * millimeter, metalCol));
 
         // Knee guide and foot anchor.
         const p2 = vector(knee[0] + xSign * kneeOffset, knee[1], knee[2]);
         const p3 = vector(foot[0] + xSign * footOffset, foot[1], foot[2]);
         const bracketCenter = vector((knee[0] + p2[0]) / 2, knee[1], knee[2]);
-        thighParts = append(thighParts, addBox(context, id + ("kneeBracket" ~ i), bracketCenter, vector(18, 10, 10) * millimeter, darkCol));
+        const bracketLength = kneeOffsetMm / 2 + 14;
+        thighParts = append(thighParts, addBox(context, id + ("kneeBracket" ~ i), bracketCenter, vector(bracketLength, 10, 10) * millimeter, darkCol));
         thighParts = append(thighParts, addCylinder(context, id + ("kneeGuide" ~ i), vector(p2[0], p2[1] - side * 8 * millimeter, p2[2]), vector(p2[0], p2[1] + side * 8 * millimeter, p2[2]), 3 * millimeter, metalCol));
         calfParts = append(calfParts, addBox(context, id + ("anchor" ~ i), p3, vector(12, 12, 12) * millimeter, darkCol));
         // Arm that carries the anchor beside the foot.

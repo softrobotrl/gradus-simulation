@@ -26,6 +26,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import yaml
 
 from pipeline.dog_env import DogEnv, DogEnvConfig, HINGE_NAMES, LEG_NAMES, TENDON_NAMES
 from pipeline.dog_model import DEFAULT_OUT, DogModelConfig, build_dog_xml
@@ -59,7 +60,6 @@ def model_checks(c: Checker, path: Path) -> mujoco.MjModel:
     c.check("4 legs / 8 hinge joints", len(LEG_NAMES) == 4 and len(HINGE_NAMES) == 8)
     mass = float(m.body_subtreemass[m.body("trunk").id])
     c.check("mass in a plausible range (2-6 kg)", 2.0 <= mass <= 6.0, f"{mass:.2f} kg")
-
     feet = {leg: float(d.geom_xpos[m.geom(f"{leg}_foot").id, 2]) for leg in LEG_NAMES}
     c.check("feet at z=0.015 (sphere radius) at the rest pose",
             all(abs(z - 0.015) < 1e-6 for z in feet.values()),
@@ -70,6 +70,27 @@ def model_checks(c: Checker, path: Path) -> mujoco.MjModel:
     c.check("actuator ctrl range is in radians and nonzero",
             np.all(m.actuator_ctrlrange[:, 1] > m.actuator_ctrlrange[:, 0]),
             f"{m.actuator_ctrlrange[0].tolist()}")
+
+    # The drive geometry has to agree between the model, the environment and the
+    # report, otherwise the tension numbers mean different things everywhere.
+    info_path = path.parent / "model_info.yaml"
+    if info_path.exists():
+        info = yaml.safe_load(info_path.read_text())
+        gear = float(m.actuator_gear[0, 0])
+        drum_radius = 1.0 / gear
+        max_tension = float(m.actuator_forcerange[0, 1]) * gear
+        c.check("drum radius agrees with the model report",
+                abs(info["drum_radius_m"] - drum_radius) < 1e-6 * drum_radius,
+                f"{info['drum_radius_m'] * 1000:.1f} mm")
+        c.check("tension limit agrees with the model report",
+                abs(info["max_tension_N"] - max_tension) < 1e-4 * max_tension,
+                f"{max_tension:.1f} N")
+        c.check("drum speed limit matches the env's rate limit",
+                abs(info["drum_speed_rad_s"] - DogEnvConfig().max_speed) < 1e-9,
+                f"{info['drum_speed_rad_s']:.1f} rad/s")
+        c.check("the gearbox gives the drum more torque than the motor",
+                info["gear_ratio"] > 1.0 and info["drum_torque_Nm"] > 0.4,
+                f"{info['gear_ratio']:.1f}:1, {info['drum_torque_Nm']:.2f} N*m")
     return m
 
 
