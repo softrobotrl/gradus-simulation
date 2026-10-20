@@ -201,17 +201,29 @@ harmless at this scale.
 
 Walking works too, once the drive has enough authority. The nominal controller walks on its own: a 3 Hz
 trot with 0.32 rad of drum swing moves the dog forward at 0.12 m/s. The policy's job is to keep that gait
-stable and to track the commanded speed. A 2 M transition run with a 0.02-0.12 m/s command ends with the
-dog walking at 0.04 m/s, a 4 % failure rate (deterministic) and 0 % (stochastic), 0.08 rad of tilt and
-0.20 m of body height.
+stable and to track the commanded speed. The final run (4 M transitions, 2,048 envs in MJX, 8 s
+episodes, a 0.02-0.12 m/s command) ends with the dog walking the whole episode:
+
+| | |
+|---|---|
+| episode return | 1596 (of about 1800 possible) |
+| failures | 0 % (deterministic and stochastic) |
+| final base height | 0.218 m (target 0.215) |
+| final tilt | 0.010 rad |
+| speed | 0.04 m/s, tracking error 0.05 m/s |
+| feet in contact | 0.73 of 4 - the trot leaves the ground during the swing |
+| tendon tension | 0.19 of the 42 N limit |
+
+The same task on the old drive (30 mm guides, no gearbox) ended with 96 % of the episodes in a fall and
+0.33 rad of tilt.
 
 What the runs suggest:
 
 - The velocity reward needs a narrow sigma. The default `--velocity-sigma 0.2` is so wide that standing
   still scores 0.94 of the walking reward, and the policy learns to stand.
 - The policy leans forward to go faster, so the upright reward has to be worth more than the extra
-  speed: `--upright-reward 1.0 --upright-sigma 0.15` still lets the tilt grow to 0.38 rad before the
-  critic catches up.
+  speed: `--upright-reward 1.0 --upright-sigma 0.15` lets the tilt grow to 0.38 rad for the first
+  million transitions before the critic catches up and pulls it back to 0.01 rad.
 - The drive has to have authority. With the old 30 mm tendon offsets the knee tendon saturated at 22 N
   of 35 N while standing, and every walk ended with the leg buckling. 45 mm offsets and a 2:1 gearbox
   (0.5 N*m at the drum, 42 N of tension) are what made walking possible - see
