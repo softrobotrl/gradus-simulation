@@ -69,19 +69,25 @@ tendon 1 sits 45 mm past the knee, on a bracket (`kneeBracket`).
 
 ## Exports
 
-Current exports are in `/home/daniel/Downloads/gradus_dog/`:
+The Onshape document is the source of truth; the exports are a convenience copy. Right now:
 
-- `gradus_dog.step` - STEP AP242, 25 solids
-- `gradus_dog.stl` - STL mesh (ASCII), 13,032 triangles, 510 x 294 x 310 mm
-- `gradus_dog_isometric.png`, `gradus_dog_front.png`, `gradus_dog_side.png` - views of the mesh
+- `gradus_dog_sim_isometric.png`, `gradus_dog_sim_front.png`, `gradus_dog_sim_side.png` - MuJoCo renders of
+  the simulation model, which uses the same numbers as this CAD (`python -m pipeline.validate_dog_env
+  --render` writes the same three views into `pipeline/build/gradus_dog/`).
+- `previous_30mm_guides/` - the STEP, STL and renders of the *previous* design (30 mm guides, no
+  gearbox). They are kept only for comparison; do not use them.
 
-Re-export them with `python -m cad.export_onshape` (credentials in `ONSHAPE_API`, `ONSHAPE_ACCESS_KEY`
-and `ONSHAPE_SECRET_KEY`). The script retries: Onshape sometimes leaves a translation in `ACTIVE` for
-minutes, answers 500 while it is busy, or fails outright during an outage (check
-<https://status.onshape.com/>). On 20 October 2026 the STEP and STL exports went through during an
-Onshape outage while the PNG exports kept failing; the PNGs above are therefore renders of the exported
-STL made locally with `python -m cad.render_stl`, and Onshape's own shaded renders replace them when
-the service is healthy again.
+The STEP and STL of the current design still have to be exported: Onshape had a major outage on
+20 October 2026 ("exports are delayed in all regions") and afterwards the free account's export quota
+answered `429 Too many requests` for every translation. Once the quota resets:
+
+```bash
+python -m cad.export_onshape --formats step stl isometric front
+```
+
+That writes `gradus_dog.step`, `gradus_dog.stl` and the two Onshape renders into this folder. The script
+retries, because Onshape also leaves translations in `ACTIVE` for minutes or answers 500 while it is
+busy. `python -m cad.render_stl` renders the exported mesh locally if the PNG translation keeps failing.
 
 ## Notes
 

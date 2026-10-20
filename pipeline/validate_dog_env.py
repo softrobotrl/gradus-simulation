@@ -243,6 +243,7 @@ def mjx_checks(c: Checker) -> None:
 
 
 def render_preview(path: Path, out: Path) -> None:
+    """Save three views of the standing dog (needs MUJOCO_GL=egl on a headless machine)."""
     print("preview")
     try:
         m = mujoco.MjModel.from_xml_path(str(path))
@@ -252,14 +253,18 @@ def render_preview(path: Path, out: Path) -> None:
         for _ in range(500):
             mujoco.mj_step(m, d)
         renderer = mujoco.Renderer(m, 720, 960)
-        camera = mujoco.MjvCamera()
-        camera.lookat[:] = [0.0, 0.0, 0.17]
-        camera.distance, camera.azimuth, camera.elevation = 0.85, 135, -18
-        renderer.update_scene(d, camera=camera)
-        import imageio.v2 as imageio
         out.parent.mkdir(parents=True, exist_ok=True)
-        imageio.imwrite(out, renderer.render())
-        print(f"  wrote {out} (set MUJOCO_GL=egl if rendering failed)")
+        import imageio.v2 as imageio
+        for name, azimuth, elevation, distance in (("isometric", 135, -18, 0.95),
+                                                  ("front", 180, -6, 0.7),
+                                                  ("side", 90, -4, 0.75)):
+            camera = mujoco.MjvCamera()
+            camera.lookat[:] = [0.0, 0.0, 0.17]
+            camera.distance, camera.azimuth, camera.elevation = distance, azimuth, elevation
+            renderer.update_scene(d, camera=camera)
+            target = out.with_name(out.stem + f"_{name}.png")
+            imageio.imwrite(target, renderer.render())
+            print(f"  wrote {target}")
     except Exception as exc:  # headless machine without a GL context
         print(f"  skipped: {exc}")
 
