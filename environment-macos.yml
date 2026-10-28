@@ -1,17 +1,18 @@
 name: gradus-rl
 channels:
-  - pytorch
   - conda-forge
   - defaults
 dependencies:
   - python=3.11
-  - pytorch
-  - torchvision
-  - torchaudio
   - numpy
   - pip
   - pip:
-    - genesis-world
+    - torch==2.8.0
+    - torchvision==0.23.0
+    - torchaudio==2.8.0
+    - genesis-world==1.4.3
+    - rsl-rl-lib==5.5.1
+    - tensordict==0.10.0
     - gymnasium
     - tensorboard
     - matplotlib
