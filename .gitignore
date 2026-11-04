@@ -292,3 +292,15 @@ Testing/
 
 data/
 results/
+
+# generated MJCF — regenerate with `python -m cad.build_leg_mjcf`
+urdf/gradus/sim/
+
+# local experiment artifacts
+logs/
+models/*.pt
+MUJOCO_LOG.TXT
+
+# local agent / MCP config (contains Onshape keys)
+mcp.json
+opencode.json

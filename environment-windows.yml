@@ -2,7 +2,6 @@
 #   conda env create -f environment-windows.yml
 # PyTorch gets CUDA (SAC networks and replay buffer on the NVIDIA GPU). JAX has no CUDA build for native Windows,
 # so the MJX physics runs on the CPU; use WSL2 + environment.yml to run the physics on the GPU too.
-# Genesis (go2_*.py) is left out; add `genesis-world` under pip if you need it.
 name: gradus-rl
 channels:
   - conda-forge

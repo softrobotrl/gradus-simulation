@@ -1,18 +1,29 @@
-# Gradus RL - Core Simulation & Control
+# Gradus simulation
 
-This repository contains the simulation environment and reinforcement learning control policies for the Gradus RL soft quadruped robot. The ultimate objective is sim-to-real transfer for a tendon-driven physical system.
+Onshape → MuJoCo pipeline for the segmented tendon-driven leg.
 
-## Architecture & Stack
-We use a monorepo structure to keep the physics bindings and agent training coupled.
+## Repository structure
 
-*   **Physics/Sim:** MuJoCo MJX
-*   **Control/ML:** PyTorch, Soft Actor-Critic (SAC)
-*   **Package Manager:** Conda
+* `cad/` — the Onshape → MJCF pipeline. Entry point: `cad/build_leg_mjcf.py`.
+  Full docs: [cad/LEG_MJCF_PIPELINE.md](cad/LEG_MJCF_PIPELINE.md).
+* `urdf/gradus/sim/` — generated MuJoCo model (`leg.xml`, `scene.xml`,
+  `assets/`). Gitignored; regenerate with the command below.
+* `urdf/plane/` — ground-plane assets.
+* `onshape-mcp/` — Onshape MCP server (git submodule).
+* `paper.pdf` — background paper.
 
-## Repository Structure
-*   `/pipeline`: CAD to sim pipeline, physics engine definitions, and low-level bindings. See [pipeline/README.md](pipeline/README.md) for the STL to MuJoCo MJX pipeline and how to run it.
-    *   Single-leg board-pushing task for SAC training: [pipeline/BOARD_TASK.md](pipeline/BOARD_TASK.md).
-*   `/policy`: SAC implementations, reward shaping, and training loops. See [policy/README.md](policy/README.md) to train SAC on the board-pushing task (`python -m policy.train_sac`).
+## Quick start
+
+```bash
+python -m cad.build_leg_mjcf      # regenerate urdf/gradus/sim/leg.xml
+DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
+```
+
+Animated tendon demo:
+
+```bash
+DISPLAY=:0 python -m cad.play_leg --xml urdf/gradus/sim/scene.xml
+```
 
 ## Environment setup
 
@@ -28,13 +39,13 @@ conda env create -f environment-macos.yml
 conda env create -f environment.yml
 ```
 
-**Native Windows** (PyTorch on the GPU; the physics runs on CPU threads, because JAX has no CUDA build for Windows):
+**Native Windows:**
 ```bash
 conda env create -f environment-windows.yml
 ```
-If conda refuses with a Terms of Service error, see [policy/README.md](policy/README.md#quick-start).
 
 Then activate the environment:
+
 ```bash
 conda activate gradus-rl
 ```

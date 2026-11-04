@@ -1,0 +1,3 @@
+[submodule "onshape-mcp"]
+	path = onshape-mcp
+	url = https://github.com/hedless/onshape-mcp.git

@@ -11,7 +11,6 @@ dependencies:
     - "torch>=2.8.0"
     - torchvision
     - torchaudio
-    - genesis-world
     - gymnasium
     - tensorboard
     - matplotlib
