@@ -1,28 +1,51 @@
 # Gradus simulation
 
-Onshape → MuJoCo pipeline for the segmented tendon-driven leg.
+Monorepo for the Gradus tendon-driven robots.
+
+## Projects
+
+### MuJoCo segmented leg (`cad/`)
+
+Onshape → `onshape-to-robot` → merged MuJoCo MJCF.
+
+- Entry: `python -m cad.build_leg_mjcf`
+- Docs: [cad/LEG_MJCF_PIPELINE.md](cad/LEG_MJCF_PIPELINE.md)
+- Output: `urdf/gradus/sim/` (gitignored; regenerate on demand)
+
+### Genesis single-leg (`genesis_leg/`)
+
+Single-leg board-pushing environment in Genesis, with explicit elastic cable
+forces and PPO training/evaluation.
+
+- Docs: [genesis_leg/README.md](genesis_leg/README.md)
+- Shared CAD helper: `pipeline/` (`config.py`, `stl_to_xml.py`, OpenCR STLs/YAML)
 
 ## Repository structure
 
-* `cad/` — the Onshape → MJCF pipeline. Entry point: `cad/build_leg_mjcf.py`.
-  Full docs: [cad/LEG_MJCF_PIPELINE.md](cad/LEG_MJCF_PIPELINE.md).
-* `urdf/gradus/sim/` — generated MuJoCo model (`leg.xml`, `scene.xml`,
-  `assets/`). Gitignored; regenerate with the command below.
+* `cad/` — MuJoCo Onshape → MJCF pipeline.
+* `genesis_leg/` — Genesis single-leg env + PPO.
+* `pipeline/` — shared STL → XML helper and OpenCR assets used by `genesis_leg`.
+* `urdf/gradus/sim/` — generated MuJoCo model (gitignored).
 * `urdf/plane/` — ground-plane assets.
 * `onshape-mcp/` — Onshape MCP server (git submodule).
+* `tests/` — Genesis cable/workflow checks.
 * `paper.pdf` — background paper.
 
 ## Quick start
 
+MuJoCo:
+
 ```bash
-python -m cad.build_leg_mjcf      # regenerate urdf/gradus/sim/leg.xml
+python -m cad.build_leg_mjcf
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 ```
 
-Animated tendon demo:
+Genesis:
 
 ```bash
-DISPLAY=:0 python -m cad.play_leg --xml urdf/gradus/sim/scene.xml
+python -m unittest discover -s tests -v
+python -m genesis_leg.validate --num-envs 4
+python -m genesis_leg.train --run-name leg_smoke --num-envs 16 --iterations 2
 ```
 
 ## Environment setup
