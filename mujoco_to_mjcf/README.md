@@ -9,8 +9,13 @@ Full documentation: [PIPELINE.md](PIPELINE.md).
 
 ```bash
 python -m mujoco_to_mjcf.build                       # writes urdf/gradus/sim/
+python -m mujoco_to_mjcf.build --out urdf/gradus/tracer --tip-up   # tracer model
 DISPLAY=:0 python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 ```
+
+`--tip-up` flips the model 180° about world X and adds a `tip` site at the
+foot centre. The resulting `urdf/gradus/tracer/` model is used by
+[`mujoco_leg/`](../mujoco_leg/README.md) for PPO shape tracing.
 
 ## Files
 

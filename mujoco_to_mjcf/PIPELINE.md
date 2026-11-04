@@ -40,6 +40,18 @@ xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.render \
     --xml urdf/gradus/sim/scene.xml --out urdf/gradus/sim
 ```
 
+### Tip-up tracer model
+
+For the trained XY shape tracer ([`mujoco_leg/`](../mujoco_leg/README.md)):
+
+```bash
+python -m mujoco_to_mjcf.build --out urdf/gradus/tracer --tip-up
+```
+
+`--tip-up` composes a 180° rotation about world X with the usual yaw, so the
+hip stays at the origin and the foot points up; it also adds a `tip` site at
+the foot centre.
+
 ---
 
 ## Source document

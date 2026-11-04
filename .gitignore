@@ -293,8 +293,9 @@ Testing/
 data/
 results/
 
-# generated MJCF — regenerate with `python -m cad.build_leg_mjcf`
+# generated MJCF — regenerate with `python -m mujoco_to_mjcf.build`
 urdf/gradus/sim/
+urdf/gradus/tracer/
 
 # local experiment artifacts
 logs/

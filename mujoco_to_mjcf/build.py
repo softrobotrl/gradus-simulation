@@ -42,7 +42,14 @@ from mujoco_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
-SCENE = """<mujoco model="leg_scene">
+
+def scene_xml(tip_up: bool) -> str:
+    floor_z = -0.10 if tip_up else -0.65
+    top_camera = (
+        '\n    <camera name="top" pos="0 0 1.2" xyaxes="1 0 0 0 1 0"/>'
+        if tip_up else ""
+    )
+    return f"""<mujoco model="leg_scene">
   <include file="leg.xml"/>
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
@@ -56,7 +63,8 @@ SCENE = """<mujoco model="leg_scene">
   </asset>
   <worldbody>
     <light pos="0 0 2" dir="0 0 -1" directional="true"/>
-    <geom name="floor" size="0 0 0.05" pos="0 0 -0.65" type="plane" material="ground"/>
+    <geom name="floor" size="0 0 0.05" pos="0 0 {floor_z}" type="plane" material="ground"/>
+    {top_camera}
   </worldbody>
 </mujoco>
 """
@@ -123,6 +131,8 @@ def main() -> None:
     p.add_argument("--servo-kv", type=float, default=None, help="servo velocity gain")
     p.add_argument("--no-rotate", action="store_true")
     p.add_argument("--free-base", action="store_true")
+    p.add_argument("--tip-up", action="store_true",
+                   help="flip 180 deg about X so the foot points up (tracer model)")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -194,9 +204,12 @@ def main() -> None:
             merge.append("--no-rotate")
         if args.free_base or not cfg.get("fix_base", True):
             merge.append("--free-base")
+        tip_up = args.tip_up or cfg.get("tip_up", False)
+        if tip_up:
+            merge.append("--tip-up")
         run(merge)
 
-        (out / "scene.xml").write_text(SCENE)
+        (out / "scene.xml").write_text(scene_xml(tip_up))
         validate(out / "leg.xml")
 
         if args.keep_work:

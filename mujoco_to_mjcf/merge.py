@@ -149,6 +149,19 @@ def quat_z(angle: float) -> str:
     return f"{math.cos(angle / 2):.9g} 0 0 {math.sin(angle / 2):.9g}"
 
 
+def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Hamilton product of two (w, x, y, z) quaternions."""
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    q = np.array([
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ])
+    return q / np.linalg.norm(q)
+
+
 # --------------------------------------------------------------------------- #
 # Main merge
 # --------------------------------------------------------------------------- #
@@ -224,6 +237,24 @@ def merge(args) -> None:
             })
             site_names[(i, kind, name_dir)] = sname
             site_world[(i, kind, name_dir)] = p
+
+    # --- drawing tip at the foot centre ----------------------------------- #
+    last = len(stations) - 1
+    xpos = data.xpos[last + 1].copy()
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, data.xquat[last + 1])
+    R = R.reshape(3, 3)
+    inner_pts = [p for kind, _, p in holes_world(stations[last]) if kind == "inner"]
+    if inner_pts:
+        centre = np.mean(inner_pts, axis=0)
+        local = R.T @ (centre - xpos)
+        ET.SubElement(bodies[last], "site", {
+            "name": "tip",
+            "pos": " ".join(f"{v:.9g}" for v in local),
+            "size": "0.004",
+            "rgba": "0.1 0.9 0.1 1",
+        })
+        print(f"* tip site at {centre}")
 
     # --- tendons ----------------------------------------------------------- #
     tendon = ET.SubElement(mujoco_root, "tendon")
@@ -315,20 +346,18 @@ def merge(args) -> None:
     if args.rotate:
         # root body may already carry a quat (hip) -- compose with the yaw
         root_body = bodies[0]
-        q = root_body.get("quat", "1 0 0 0").split()
-        q = np.array([float(x) for x in q])
+        q = np.array([float(x) for x in root_body.get("quat", "1 0 0 0").split()])
         yq = np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)])
-        w1, x1, y1, z1 = q
-        w2, x2, y2, z2 = yq
-        qq = np.array([
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        ])
-        qq /= np.linalg.norm(qq)
-        root_body.set("quat", " ".join(f"{v:.9g}" for v in qq))
+        root_body.set("quat", " ".join(f"{v:.9g}" for v in quat_mul(yq, q)))
         print(f"* yaw {math.degrees(yaw):.2f} deg")
+
+    # --- optional 180 deg flip about world X so the tip points up ---------- #
+    if args.tip_up:
+        root_body = bodies[0]
+        q = np.array([float(x) for x in root_body.get("quat", "1 0 0 0").split()])
+        flip = np.array([0.0, 1.0, 0.0, 0.0])   # 180 deg about X
+        root_body.set("quat", " ".join(f"{v:.9g}" for v in quat_mul(flip, q)))
+        print("* tip-up: flipped 180 deg about world X")
 
     ET.indent(tree, space="  ")
     tree.write(args.out, encoding="utf-8", xml_declaration=True)
@@ -361,9 +390,11 @@ def main():
     p.add_argument("--servo-travel", type=float, default=math.pi, help="max spool travel (rad)")
     p.add_argument("--servo-kp", type=float, default=5000.0, help="servo position gain")
     p.add_argument("--servo-kv", type=float, default=50.0, help="servo velocity gain")
+    p.add_argument("--tip-up", action="store_true",
+                   help="flip the model 180 deg about world X so the foot points up")
     p.add_argument("--no-rotate", dest="rotate", action="store_false")
     p.add_argument("--free-base", dest="fix_base", action="store_false")
-    p.set_defaults(rotate=True, fix_base=True)
+    p.set_defaults(rotate=True, fix_base=True, tip_up=False)
     args = p.parse_args()
     merge(args)
 
