@@ -13,12 +13,12 @@ The clean ``Leg-Sim`` assembly is reused when it already exists; pass
 
 Examples::
 
-    python -m cad.build_leg_mjcf
-    python -m cad.build_leg_mjcf --rebuild
-    python -m cad.build_leg_mjcf --assembly <element-id> --out /tmp/leg
+    python -m mujoco_to_mjcf.build
+    python -m mujoco_to_mjcf.build --rebuild
+    python -m mujoco_to_mjcf.build --assembly <element-id> --out /tmp/leg
 
 Everything geometric (station order, hole radii/angles, link lengths) is read
-from Onshape; ``cad/leg_config.json`` only holds document IDs and material
+from Onshape; ``mujoco_to_mjcf/config.json`` only holds document IDs and material
 defaults.
 """
 
@@ -38,9 +38,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cad.build_sim_assembly import build, ensure, is_valid  # noqa: E402
+from mujoco_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
 
-CONFIG_PATH = Path(__file__).with_name("leg_config.json")
+CONFIG_PATH = Path(__file__).with_name("config.json")
 
 SCENE = """<mujoco model="leg_scene">
   <include file="leg.xml"/>
@@ -171,7 +171,7 @@ def main() -> None:
 
         # --- merge ---------------------------------------------------------- #
         merge = [
-            sys.executable, "-m", "cad.merge_mjcf",
+            sys.executable, "-m", "mujoco_to_mjcf.merge",
             "--xml", str(base_xml),
             "--out", str(out / "leg.xml"),
             "--document", did,

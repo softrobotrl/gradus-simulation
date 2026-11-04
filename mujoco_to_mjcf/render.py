@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the merged leg model to PNGs (works headless under xvfb + glfw).
 
-    xvfb-run -a env MUJOCO_GL=glfw python -m cad.render_leg \
+    xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.render \
         --xml urdf/gradus/sim/scene.xml --out urdf/gradus/sim
 """
 

@@ -14,7 +14,7 @@ with:
 
 Usage::
 
-    python -m cad.build_sim_assembly
+    python -m mujoco_to_mjcf.assembly
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from cad.export_onshape import Onshape
+from mujoco_to_mjcf.onshape import Onshape
 
 DEFAULT_DOC = "e8da7c50681f40644f3812fb"
 DEFAULT_WS = "71bd24dd8d18a5e53f7ffb25"

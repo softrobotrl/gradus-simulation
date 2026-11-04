@@ -4,12 +4,12 @@ Monorepo for the Gradus tendon-driven robots.
 
 ## Projects
 
-### MuJoCo segmented leg (`cad/`)
+### MuJoCo segmented leg (`mujoco_to_mjcf/`)
 
 Onshape → `onshape-to-robot` → merged MuJoCo MJCF.
 
-- Entry: `python -m cad.build_leg_mjcf`
-- Docs: [cad/LEG_MJCF_PIPELINE.md](cad/LEG_MJCF_PIPELINE.md)
+- Entry: `python -m mujoco_to_mjcf.build`
+- Docs: [mujoco_to_mjcf/PIPELINE.md](mujoco_to_mjcf/PIPELINE.md)
 - Output: `urdf/gradus/sim/` (gitignored; regenerate on demand)
 
 ### Genesis single-leg (`genesis_leg/`)
@@ -22,7 +22,7 @@ forces and PPO training/evaluation.
 
 ## Repository structure
 
-* `cad/` — MuJoCo Onshape → MJCF pipeline.
+* `mujoco_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
 * `genesis_leg/` — Genesis single-leg env + PPO.
 * `pipeline/` — shared STL → XML helper and OpenCR assets used by `genesis_leg`.
 * `urdf/gradus/sim/` — generated MuJoCo model (gitignored).
@@ -36,7 +36,7 @@ forces and PPO training/evaluation.
 MuJoCo:
 
 ```bash
-python -m cad.build_leg_mjcf
+python -m mujoco_to_mjcf.build
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 ```
 
