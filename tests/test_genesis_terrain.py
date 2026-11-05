@@ -64,6 +64,12 @@ class GenesisSceneTests(unittest.TestCase):
             self.assertAlmostEqual(rest, terrain.heights[row, col], delta=0.005, msg=f"ball at ({x}, {y})")
         self.assertGreater(terrain.heights[round((1 + 4) / CELL), round((-3 + 4) / CELL)], 0.15)
 
+    def test_height_query_matches_the_generated_grid(self):
+        axis = -self.terrain.size / 2 + np.arange(self.terrain.heights.shape[0]) * CELL
+        x, y = np.meshgrid(axis, axis)
+        heights = self.ground.get_terrain_height(np.stack((x.ravel(), y.ravel()), -1)).cpu().numpy()
+        np.testing.assert_allclose(heights.reshape(self.terrain.heights.shape), self.terrain.heights, atol=1e-4)
+
     def test_go2_stands_on_the_spawn_tile(self):
         base = self.robot.get_pos().cpu().numpy().ravel()
         self.assertFalse(self.solver_error)

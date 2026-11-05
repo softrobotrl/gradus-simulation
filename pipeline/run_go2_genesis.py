@@ -4,8 +4,9 @@ Usage: python -m pipeline.run_go2_genesis --terrain mixed --seed 3 --difficulty 
 
 The terrain comes from pipeline/terrain.py, so a seed gives the same ground in every simulator that uses it. Go2 (the
 URDF bundled with Genesis, a stand-in until the Gradus quadruped model exists) starts on a flat tile and holds its home
-pose with PD control; there is no policy yet. Left-drag it with the mouse to pull it onto the terrain. Close the window
-to stop. The first build takes about 40 s on a laptop CPU while Genesis compiles; later ones take a few seconds.
+pose with PD control; there is no policy yet. Left-drag moves it: grab the side of the body and lift it clear before
+moving it, because dragging it along the ground tips it over. Rerun the command to reset; close the window to stop.
+The first build takes about 40 s on a laptop CPU while Genesis compiles; later ones take a few seconds.
 """
 
 import argparse
@@ -38,9 +39,12 @@ def new_scene(terrain: Terrain, show_viewer: bool = False) -> gs.Scene:
 
 
 def add_terrain(scene: gs.Scene, terrain: Terrain):
+    """Add the terrain to a scene. With n_envs > 0, every env shares this one map in the same coordinates (env_spacing
+    is display only); only one terrain per scene collides correctly, and there is no ground past its edge."""
     # Genesis indexes height_field[x, y] from the corner at pos; Terrain.heights is [y, x] and centred on the origin.
-    return scene.add_entity(gs.morphs.Terrain(height_field=terrain.heights.T, horizontal_scale=CELL, vertical_scale=1.0,
-                                              pos=(-terrain.size / 2, -terrain.size / 2, 0.0)))
+    # copy(): a bare .T is Fortran-ordered, which makes ground.get_terrain_height() raise.
+    return scene.add_entity(gs.morphs.Terrain(height_field=terrain.heights.T.copy(), horizontal_scale=CELL,
+                                              vertical_scale=1.0, pos=(-terrain.size / 2, -terrain.size / 2, 0.0)))
 
 
 def add_go2(scene: gs.Scene, terrain: Terrain):
@@ -50,7 +54,7 @@ def add_go2(scene: gs.Scene, terrain: Terrain):
 
 
 def hold_home_pose(robot) -> None:
-    """Start in the home pose and hold it with PD control. Call after scene.build()."""
+    """Start in the home pose and hold it with PD control. Call after scene.build() and after every scene.reset()."""
     dofs = [robot.get_joint(name).dofs_idx_local[0] for name in HOME_POSE]
     target = np.array(list(HOME_POSE.values()))
     robot.set_dofs_kp(np.full(len(dofs), KP), dofs)
