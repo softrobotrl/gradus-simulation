@@ -24,3 +24,8 @@ dependencies:
     - trimesh
     - networkx
     - scipy
+    # CAD -> MJCF export (see onshape_to_mjcf/PIPELINE.md)
+    - onshape-to-robot
+    - python-dotenv
+    - requests
+    - imageio
