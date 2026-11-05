@@ -28,15 +28,33 @@ forces and PPO training/evaluation.
 - Docs: [genesis_leg/README.md](genesis_leg/README.md)
 - Shared CAD helper: `pipeline/` (`config.py`, `stl_to_xml.py`, OpenCR STLs/YAML)
 
+### Genesis random terrain (`pipeline/run_go2_genesis.py`)
+
+A Unitree Go2 (the URDF bundled with Genesis, a stand-in until the Gradus quadruped model exists) on random terrain, in the Genesis viewer:
+
+```bash
+python -m pipeline.run_go2_genesis --terrain mixed --seed 3 --difficulty 0.5 --backend cpu
+```
+
+- `--terrain`: `mixed` (default; a random kind per 2 m tile), `rough`, `slope`, `obstacles` or `flat`.
+- `--seed`: the same seed gives the same terrain. Leave it out for a random one; the command to repeat the run is printed.
+- `--difficulty`: 0 to 1, a maximum: each tile draws its own difficulty between 0 and this value. At 1: bumps up to 8 cm, slopes up to 20°, blocks 12 cm tall.
+- `--grid`: N for an N x N grid of tiles (default 4, so 8 m x 8 m). The robot always starts on a flat tile, so `--grid 1` is flat ground.
+- `--backend`: `gpu` (default, NVIDIA only) or `cpu` (use this on macOS).
+
+Go2 holds its standing pose; it has no walking policy yet. Left-drag it with the mouse to pull it onto the terrain. The first build takes about 40 s while Genesis compiles.
+
+To add the terrain to another Genesis scene, use `generate()` from `pipeline/terrain.py` and `add_terrain()` from `pipeline/run_go2_genesis.py`.
+
 ## Repository structure
 
 * `onshape_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
 * `genesis_leg/` — Genesis single-leg env + PPO.
-* `pipeline/` — shared STL → XML helper and OpenCR assets used by `genesis_leg`.
+* `pipeline/` — shared STL → XML helper and OpenCR assets used by `genesis_leg`; random terrain generator.
 * `urdf/gradus/sim/` — generated MuJoCo model (gitignored).
 * `urdf/plane/` — ground-plane assets.
 * `onshape-mcp/` — Onshape MCP server (git submodule).
-* `tests/` — Genesis cable/workflow checks.
+* `tests/` — Genesis cable/workflow/terrain checks.
 * `paper.pdf` — background paper.
 
 ## Quick start
