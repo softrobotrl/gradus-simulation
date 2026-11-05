@@ -11,10 +11,13 @@ forward walking only, PPO, no surrogate model.
 ```
 
 - 4 legs × 8 tendon servos = 32 actuators.
-- **16 policy actions**: positive tendon pull fractions for diagonal group A
-  (FL + BR) and group B (FR + BL). `0` = no pull (standing), `1` = full pull.
-  The two diagonal pairs are tied, so the policy learns a trot with half the
-  output dimension.
+- **Nominal all-leg bound**: a phase-based pattern pulls all four legs' front
+  tendons during the recovery half-cycle and back tendons during the push
+  half-cycle. The continuum legs cannot lift their feet above straight, so a
+  bound/shuffle is more realistic than a swing-based trot.
+- **16 policy actions**: residual tendon pulls for group A (FL + BR) and group
+  B (FR + BL). `pull = nominal + 0.5 * residual`, clipped to `[0, 1]`. The
+  diagonal pairs are tied, so the policy has half the output dimension.
 - 104 observations: trunk quat, body velocity, angular velocity, height error,
   command, gait phase, 32 tendon lengths, 32 tendon forces, 4 foot heights,
   4 foot vertical velocities, previous action.
@@ -44,8 +47,8 @@ python -m walking_box.train_rsl \
 
 Curriculum:
 
-1. 300 iterations at `cmd_max=0` (stand / trot in place)
-2. 400 at `cmd_max=0.10` m/s
+1. 300 iterations with the nominal gait off, `cmd_max=0` (stand)
+2. 400 at `cmd_max=0.10` m/s with the nominal bound on
 3. 800 at `cmd_max=0.25` m/s
 
 The policy is a 256×256 MLP actor/critic; PPO with 4 epochs, 4 minibatches,
@@ -67,7 +70,6 @@ Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps).
 ```
 track forward body velocity
 + hold trunk height and stay upright
-+ alternate diagonal foot lift with the gait phase
 − tendon tension, action rate, yaw rate
 + small survival bonus
 ```

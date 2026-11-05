@@ -27,12 +27,15 @@ class EnvConfig:
     n_substeps: int = 5
     control_dt: float = 0.01
     episode_steps: int = 400
-    period: float = 0.5
+    period: float = 0.8
     stand_height: float = 0.6525
     cmd_max: float = 0.25
     lift_height: float = 0.045
     stance_height: float = 0.015
-    lift_weight: float = 0.2
+    lift_weight: float = 0.0
+    gait_amp: float = 0.5
+    gait_mode: str = "bound"      # "bound" or "diagonal"
+    residual_scale: float = 0.5
     action_dim: int = 16
     num_threads: int | None = None
     seed: int = 0
@@ -74,6 +77,7 @@ class QuadrupedCpuEnv:
         self.phase = np.zeros(cfg.num_envs, dtype=np.float64)
         self.prev_action = np.zeros((cfg.num_envs, cfg.action_dim), dtype=np.float64)
         self.prev_foot_z = np.zeros((cfg.num_envs, 4), dtype=np.float64)
+        self.prev_pos = np.zeros((cfg.num_envs, 3), dtype=np.float64)
 
         obs0 = self._obs_one(0)
         self.num_obs = int(obs0.shape[0])
@@ -98,14 +102,15 @@ class QuadrupedCpuEnv:
         self.prev_action[i] = 0.0
         self.cmd[i] = [self.rng.uniform(0.0, self.cfg["cmd_max"]) if randomize else 0.0, 0.0, 0.0]
         self.prev_foot_z[i] = d.site_xpos[self.tip_ids, 2]
+        self.prev_pos[i] = d.qpos[:3]
 
     def _obs_one(self, i: int) -> np.ndarray:
         d = self.datas[i]
         q = d.qpos[3:7]
         R = quat_to_R(q)
-        v_world = d.cvel[self.trunk_id][:3]
+        v_world = (d.qpos[:3] - self.prev_pos[i]) / self.dt
         v_body = R.T @ v_world
-        ang = d.cvel[self.trunk_id][3:6]
+        ang = d.qvel[3:6]
         z = d.qpos[2]
         foot_z = d.site_xpos[self.tip_ids, 2]
         foot_vz = (foot_z - self.prev_foot_z[i]) / self.dt
@@ -124,7 +129,7 @@ class QuadrupedCpuEnv:
         d = self.datas[i]
         q = d.qpos[3:7]
         R = quat_to_R(q)
-        v_world = d.cvel[self.trunk_id][:3]
+        v_world = (d.qpos[:3] - self.prev_pos[i]) / self.dt
         vx = (R.T @ v_world)[0]
         z = d.qpos[2]
         up_z = R[2, 2]
@@ -138,8 +143,8 @@ class QuadrupedCpuEnv:
         ])
         r_vel = math.exp(-0.5 * ((vx - self.cmd[i, 0]) / 0.15) ** 2) - 0.5 * ((vx - self.cmd[i, 0]) / 0.3) ** 2
         r_height = math.exp(-0.5 * ((z - self.cfg["stand_height"]) / 0.04) ** 2)
-        r_tilt = -0.5 * (1.0 - up_z) / 0.05
-        r_yaw = -0.1 * (d.cvel[self.trunk_id][5] / 0.5) ** 2
+        r_tilt = -0.5 * (1.0 - up_z) / 0.1
+        r_yaw = -0.0001 * (d.qvel[5] / 0.5) ** 2
         r_lift = -0.5 * np.mean((foot_z - target_z) ** 2) / 0.02 ** 2
         r_ten = -0.001 * np.mean(-d.actuator_force / self.fmax)
         r_smooth = -0.01 * np.mean((action - self.prev_action[i]) ** 2)
@@ -148,7 +153,13 @@ class QuadrupedCpuEnv:
             + self.cfg["lift_weight"] * r_lift + r_ten + r_smooth + 0.1
         )
         failed = (z < 0.35) or (z > 1.0) or (up_z < 0.5) or (not np.isfinite(d.qpos).all())
-        return float(reward), bool(failed), {"vx": vx, "z": z, "up": up_z}
+        info = {
+            "vx": vx, "z": z, "up": up_z,
+            "r_vel": r_vel, "r_height": r_height, "r_tilt": r_tilt,
+            "r_yaw": r_yaw, "r_lift": r_lift, "r_ten": r_ten,
+            "r_smooth": r_smooth,
+        }
+        return float(reward), bool(failed), info
 
     # ------------------------------------------------------------------ #
     def _phys_chunk(self, idxs: np.ndarray, ctrl: np.ndarray) -> None:
@@ -164,9 +175,27 @@ class QuadrupedCpuEnv:
         if action.shape != (self.num_envs, self.num_actions):
             raise ValueError(f"actions shape {action.shape}, expected {(self.num_envs, self.num_actions)}")
 
-        # positive-only tendon pull: action 0 = no pull, action 1 = full pull
-        pull = np.clip(action, 0.0, 1.0)
-        pull32 = np.concatenate([pull[:, 0:8], pull[:, 8:16], pull[:, 8:16], pull[:, 0:8]], axis=1)
+        # nominal diagonal trot: front pull during swing, back pull during stance
+        p = self.phase[:, None]
+        if self.cfg["gait_mode"] == "diagonal":
+            p_leg = np.concatenate([p, (p + 0.5) % 1.0, (p + 0.5) % 1.0, p], axis=1)
+        else:
+            p_leg = np.repeat(p, 4, axis=1)
+        f = np.sin(2.0 * np.pi * p_leg) * self.cfg["gait_amp"]
+        front = np.maximum(f, 0.0)
+        back = np.maximum(-f, 0.0)
+        nom = np.zeros((self.num_envs, 4, 8), dtype=np.float64)
+        nom[:, :, 0] = front      # inner_front
+        nom[:, :, 2] = back       # inner_back
+        nom[:, :, 4] = front      # outer_front
+        nom[:, :, 6] = back       # outer_back
+        nom32 = nom.reshape(self.num_envs, 32)
+
+        # policy action is a residual on the nominal trot
+        res32 = np.concatenate(
+            [action[:, 0:8], action[:, 8:16], action[:, 8:16], action[:, 0:8]], axis=1
+        )
+        pull32 = np.clip(nom32 + self.cfg["residual_scale"] * res32, 0.0, 1.0)
         target = self.l0[None, :] - self.stroke[None, :] * pull32
         ctrl = np.clip(0.5 * np.array([d.ctrl for d in self.datas]) + 0.5 * target,
                        self.l0[None, :] - self.stroke[None, :], self.l0[None, :])
@@ -177,7 +206,8 @@ class QuadrupedCpuEnv:
         done = np.zeros(self.num_envs, dtype=bool)
         failed = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros_like(self.obs)
-        log = {"vx": np.zeros(self.num_envs), "z": np.zeros(self.num_envs), "up": np.zeros(self.num_envs)}
+        term_keys = ("r_vel", "r_height", "r_tilt", "r_yaw", "r_lift", "r_ten", "r_smooth")
+        log = {k: np.zeros(self.num_envs) for k in ("vx", "z", "up") + term_keys}
 
         for i in range(self.num_envs):
             self.t[i] += 1
@@ -188,8 +218,11 @@ class QuadrupedCpuEnv:
             log["vx"][i] = info["vx"]
             log["z"][i] = info["z"]
             log["up"][i] = info["up"]
+            for k in term_keys:
+                log[k][i] = info[k]
             self.prev_action[i] = action[i]
             self.prev_foot_z[i] = self.datas[i].site_xpos[self.tip_ids, 2]
+            self.prev_pos[i] = self.datas[i].qpos[:3]
             self.phase[i] = (self.phase[i] + self.dt / self.cfg["period"]) % 1.0
             self.obs[i] = self._obs_one(i)
             final_obs[i] = self.obs[i]
@@ -210,6 +243,7 @@ class QuadrupedCpuEnv:
                 "/height_mean": float(log["z"].mean()),
                 "/up_mean": float(log["up"].mean()),
                 "/failed": float(failed.mean()),
+                **{f"/{k}": float(log[k].mean()) for k in term_keys},
             },
         }
         return (

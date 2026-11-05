@@ -97,12 +97,14 @@ def main() -> None:
         # curriculum: stand -> slow walk -> full command range
         env.cfg["cmd_max"] = 0.0
         env.cfg["lift_weight"] = 0.0
+        env.cfg["gait_amp"] = 0.0
         first = min(300, args.iterations)
         runner.learn(first, init_at_random_ep_len=True)
         if args.iterations > first:
             env.cfg["cmd_max"] = 0.10
-            env.cfg["lift_weight"] = 0.2
-            print("* curriculum: cmd_max=0.10, foot lift on")
+            env.cfg["lift_weight"] = 0.0
+            env.cfg["gait_amp"] = 0.5
+            print("* curriculum: cmd_max=0.10, nominal bound on")
             second = min(400, args.iterations - first)
             runner.learn(second)
             remaining = args.iterations - first - second
