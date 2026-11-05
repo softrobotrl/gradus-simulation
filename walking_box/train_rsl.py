@@ -43,7 +43,7 @@ def training_config(name: str, steps: int) -> dict:
             "obs_normalization": True,
             "distribution_cfg": {
                 "class_name": "GaussianDistribution",
-                "init_std": 1.0,
+                "init_std": 0.5,
                 "std_type": "scalar",
             },
         },
@@ -94,12 +94,15 @@ def main() -> None:
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)
     try:
-        # curriculum: stand/trot in place -> slow walk -> full command range
+        # curriculum: stand -> slow walk -> full command range
+        env.cfg["cmd_max"] = 0.0
+        env.cfg["lift_weight"] = 0.0
         first = min(300, args.iterations)
         runner.learn(first, init_at_random_ep_len=True)
         if args.iterations > first:
             env.cfg["cmd_max"] = 0.10
-            print("* curriculum: cmd_max=0.10")
+            env.cfg["lift_weight"] = 0.2
+            print("* curriculum: cmd_max=0.10, foot lift on")
             second = min(400, args.iterations - first)
             runner.learn(second)
             remaining = args.iterations - first - second

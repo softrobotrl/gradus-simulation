@@ -32,6 +32,7 @@ class EnvConfig:
     cmd_max: float = 0.25
     lift_height: float = 0.045
     stance_height: float = 0.015
+    lift_weight: float = 0.2
     action_dim: int = 16
     num_threads: int | None = None
     seed: int = 0
@@ -142,7 +143,10 @@ class QuadrupedCpuEnv:
         r_lift = -0.5 * np.mean((foot_z - target_z) ** 2) / 0.02 ** 2
         r_ten = -0.001 * np.mean(-d.actuator_force / self.fmax)
         r_smooth = -0.01 * np.mean((action - self.prev_action[i]) ** 2)
-        reward = r_vel + 0.5 * r_height + r_tilt + r_yaw + 0.2 * r_lift + r_ten + r_smooth + 0.1
+        reward = (
+            r_vel + 0.5 * r_height + r_tilt + r_yaw
+            + self.cfg["lift_weight"] * r_lift + r_ten + r_smooth + 0.1
+        )
         failed = (z < 0.35) or (z > 1.0) or (up_z < 0.5) or (not np.isfinite(d.qpos).all())
         return float(reward), bool(failed), {"vx": vx, "z": z, "up": up_z}
 
@@ -160,7 +164,8 @@ class QuadrupedCpuEnv:
         if action.shape != (self.num_envs, self.num_actions):
             raise ValueError(f"actions shape {action.shape}, expected {(self.num_envs, self.num_actions)}")
 
-        pull = np.clip(0.5 * (action + 1.0), 0.0, 1.0)
+        # positive-only tendon pull: action 0 = no pull, action 1 = full pull
+        pull = np.clip(action, 0.0, 1.0)
         pull32 = np.concatenate([pull[:, 0:8], pull[:, 8:16], pull[:, 8:16], pull[:, 0:8]], axis=1)
         target = self.l0[None, :] - self.stroke[None, :] * pull32
         ctrl = np.clip(0.5 * np.array([d.ctrl for d in self.datas]) + 0.5 * target,

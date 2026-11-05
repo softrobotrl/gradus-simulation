@@ -11,9 +11,10 @@ forward walking only, PPO, no surrogate model.
 ```
 
 - 4 legs × 8 tendon servos = 32 actuators.
-- **16 policy actions**: 8 tendon pulls for diagonal group A (FL + BR) and 8
-  for group B (FR + BL).  The two diagonal pairs are tied, so the policy learns
-  a trot with half the output dimension.
+- **16 policy actions**: positive tendon pull fractions for diagonal group A
+  (FL + BR) and group B (FR + BL). `0` = no pull (standing), `1` = full pull.
+  The two diagonal pairs are tied, so the policy learns a trot with half the
+  output dimension.
 - 104 observations: trunk quat, body velocity, angular velocity, height error,
   command, gait phase, 32 tendon lengths, 32 tendon forces, 4 foot heights,
   4 foot vertical velocities, previous action.

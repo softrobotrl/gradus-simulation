@@ -297,6 +297,7 @@ results/
 urdf/gradus/sim/
 urdf/gradus/tracer/
 urdf/gradus/walk/
+urdf/gradus/*.zip
 
 # local experiment artifacts
 logs/
