@@ -296,6 +296,7 @@ results/
 # generated MJCF — regenerate with `python -m mujoco_to_mjcf.build`
 urdf/gradus/sim/
 urdf/gradus/tracer/
+urdf/gradus/walk/
 
 # local experiment artifacts
 logs/
