@@ -3,8 +3,9 @@
 End-to-end, reproducible export of the Onshape leg prototype to a merged MuJoCo
 model: **Onshape assembly → `onshape-to-robot` → tendon/spring merge → `leg.xml`**.
 
-There is no hand-maintained geometry file. Station order, link lengths, hole
-radii, hole angles and tendon routing are all read from Onshape.
+Station order, link lengths, hole positions/angles and tendon routing are read
+from Onshape. The bore/cable-hole and tendon-ring radii are configurable in
+`config.json`.
 
 ---
 
@@ -25,13 +26,13 @@ Output:
 urdf/gradus/sim/
 ├── leg.xml        merged model
 ├── scene.xml      leg.xml + floor/light
-├── assets/        STL meshes
-├── README.md
-└── leg_pose_*.png rendered poses
+└── assets/        STL meshes
 ```
 
-Open the interactive viewer (the real display here is `:0`; the shell's
-`DISPLAY=:10` does not exist):
+`onshape_to_mjcf.render` additionally writes `leg_pose_*.png` into the same
+directory.
+
+Open the interactive viewer:
 
 ```bash
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
@@ -289,7 +290,7 @@ and the servo/actuator.
 
 ## Rendering / viewer
 
-Interactive (real display):
+Interactive:
 
 ```bash
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
@@ -302,12 +303,8 @@ xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.render \
     --xml urdf/gradus/sim/scene.xml --out urdf/gradus/sim
 ```
 
-Poses written: `rest`, `inner_front`, `inner_back`, `inner_left`,
-`outer_front`.
-
-| rest | inner front (200 N) | outer front (400 N) |
-|---|---|---|
-| ![rest](../urdf/gradus/sim/leg_pose_rest.png) | ![inner front](../urdf/gradus/sim/leg_pose_inner_front.png) | ![outer front](../urdf/gradus/sim/leg_pose_outer_front.png) |
+Poses written to `urdf/gradus/sim/`: `rest`, `inner_front`, `inner_back`,
+`inner_left`, `outer_front`.
 
 ### Drive it
 
@@ -326,19 +323,8 @@ xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.play \
     --record urdf/gradus/sim/leg_wave.gif --seconds 6
 ```
 
-![wave](../urdf/gradus/sim/leg_wave.gif)
-
 `--amp` is the peak tension (default 220 N), `--freq` the circle frequency
 (default 0.35 Hz).
-
-### Display note
-
-The shell used to export `DISPLAY=:10` (a stale `fractal-pop` Xvfb). The real
-Xorg session is `:0`. Fixed in `~/.zshrc`, `~/.bashrc`, `~/.zshenv`, and
-`~/.config/environment.d/10-display.conf`; the systemd user environment now
-reports `DISPLAY=:0`. A running agent process keeps its own old env until it is
-restarted, so use `DISPLAY=:0` explicitly if an already-running process still
-reports `:10`.
 
 ---
 

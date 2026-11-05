@@ -24,7 +24,6 @@ import time
 import imageio.v2 as imageio
 import mujoco
 import mujoco.viewer
-import numpy as np
 
 
 def set_controls(model: mujoco.MjModel, data: mujoco.MjData,
@@ -57,7 +56,10 @@ def set_controls(model: mujoco.MjModel, data: mujoco.MjData,
             i = model.actuator(name).id
             if servo:
                 lo, hi = model.actuator_ctrlrange[i]
-                data.ctrl[i] = hi - (hi - lo) * pull
+                fmin, fmax = model.actuator_forcerange[i]
+                limit = max(abs(fmin), abs(fmax)) or 1.0
+                fraction = min(max(amp * pull / limit, 0.0), 1.0)
+                data.ctrl[i] = hi - (hi - lo) * fraction
             else:
                 data.ctrl[i] = amp * pull
 
