@@ -75,6 +75,31 @@ still holding ~1.5 mm RMS. Closed curves track at ~1 mm.
 Evaluation artifacts are in `logs/mujoco_leg/tracer_final/eval_final/`
 (`eval_circle.gif`, `eval_*.png`, `metrics.txt`).
 
+## Watch it draw
+
+Live viewer (top-down, 50 mm star; the training radius is 35 mm):
+
+```bash
+DISPLAY=:0 python -m mujoco_leg.view --shape star --radius 0.05 --view top
+```
+
+The policy runs on the CPU MuJoCo model with a NumPy forward pass, so the
+viewer does not need JAX/CUDA. Use `--view perspective` for a 3/4 view.
+On this machine GLFW needs the active X display explicitly:
+
+```bash
+DISPLAY=:0.0 XAUTHORITY=/run/user/1000/gdm/Xauthority \
+    python -m mujoco_leg.view --shape star --radius 0.05
+```
+
+Render a GIF instead:
+
+```bash
+python -m mujoco_leg.render_shape \
+    --shape star --radius 0.05 --view top \
+    --out logs/mujoco_leg/tracer_final/draw_star.gif
+```
+
 ## Task design
 
 **Shapes** (`shapes.py`): 50 % random 2-D Fourier curves, 30 % six-vertex
@@ -116,6 +141,8 @@ expensive for MJX on an 8 GB card.
 | `ppo.py` | actor-critic, GAE, Adam, PPO update |
 | `train.py` | rollout + PPO loop, checkpoints, CSV metrics |
 | `evaluate.py` | held-out rollouts, XY plots, GIF |
+| `view.py` | live MuJoCo viewer (CPU policy, target + trail) |
+| `render_shape.py` | offline GIF of a shape with target + trail |
 
 ## Notes
 
