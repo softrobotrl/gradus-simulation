@@ -59,11 +59,24 @@ The policy is a 256×256 MLP actor/critic; PPO with 4 epochs, 4 minibatches,
 
 ```bash
 python -m walking_box.evaluate \
-    --ckpt logs/walking_box/walk1/model_1500.pt \
-    --cmd 0.2 --steps 400
+    --ckpt logs/walking_box/walk3/model_1497.pt \
+    --cmd 0.2 --gait-amp 0.4 --steps 400
 ```
 
 Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps).
+
+### Result (walk3, 1500 iterations)
+
+| nominal bound | result |
+|---|---|
+| `gait_amp=0.3` | stable, 0.024 m/s (too slow) |
+| **`gait_amp=0.4`** | **stable, 0.116 m/s, 0.475 m in 4 s, body 0.637 m** |
+| `gait_amp=0.5` | 0.237 m/s but falls at 2.6 s |
+
+The nominal all-leg bound alone (zero residual) reaches ~0.25 m/s but tips
+over; the residual PPO learns to reduce the amplitude and stay upright. The
+next step is to tune the reward/curriculum to keep the faster 0.5-bound gait
+stable.
 
 ## Reward
 

@@ -27,6 +27,7 @@ def main():
     p.add_argument("--ckpt", type=Path, default=Path("logs/walking_box/walk1/model_1500.pt"))
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--cmd", type=float, default=0.2)
+    p.add_argument("--gait-amp", type=float, default=None)
     p.add_argument("--steps", type=int, default=400)
     p.add_argument("--every", type=int, default=2)
     p.add_argument("--size", type=int, default=480)
@@ -35,7 +36,12 @@ def main():
     out = args.out or args.ckpt.parent / "eval"
     out.mkdir(parents=True, exist_ok=True)
 
-    cfg = EnvConfig(num_envs=1, num_threads=1, episode_steps=args.steps)
+    cfg = EnvConfig(
+        num_envs=1,
+        num_threads=1,
+        episode_steps=args.steps,
+        gait_amp=0.5 if args.gait_amp is None else args.gait_amp,
+    )
     env = QuadrupedCpuEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
     runner.load(str(args.ckpt), map_location="cpu")
