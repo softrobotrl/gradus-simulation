@@ -28,8 +28,11 @@ class EnvConfig:
     control_dt: float = 0.01
     episode_steps: int = 400
     period: float = 0.8
-    stand_height: float = 0.6525
+    stand_height: float = 0.6625
+    cmd_min: float = 0.10
     cmd_max: float = 0.25
+    vel_weight: float = 2.0
+    survival_bonus: float = 0.02
     lift_height: float = 0.045
     stance_height: float = 0.015
     lift_weight: float = 0.0
@@ -100,7 +103,9 @@ class QuadrupedCpuEnv:
         self.t[i] = 0
         self.phase[i] = 0.0
         self.prev_action[i] = 0.0
-        self.cmd[i] = [self.rng.uniform(0.0, self.cfg["cmd_max"]) if randomize else 0.0, 0.0, 0.0]
+        cmd = (self.rng.uniform(self.cfg["cmd_min"], self.cfg["cmd_max"])
+               if randomize else 0.0)
+        self.cmd[i] = [cmd, 0.0, 0.0]
         self.prev_foot_z[i] = d.site_xpos[self.tip_ids, 2]
         self.prev_pos[i] = d.qpos[:3]
 
@@ -149,8 +154,9 @@ class QuadrupedCpuEnv:
         r_ten = -0.001 * np.mean(-d.actuator_force / self.fmax)
         r_smooth = -0.01 * np.mean((action - self.prev_action[i]) ** 2)
         reward = (
-            r_vel + 0.5 * r_height + r_tilt + r_yaw
-            + self.cfg["lift_weight"] * r_lift + r_ten + r_smooth + 0.1
+            self.cfg["vel_weight"] * r_vel + 0.5 * r_height + r_tilt + r_yaw
+            + self.cfg["lift_weight"] * r_lift + r_ten + r_smooth
+            + self.cfg["survival_bonus"]
         )
         failed = (z < 0.35) or (z > 1.0) or (up_z < 0.5) or (not np.isfinite(d.qpos).all())
         info = {

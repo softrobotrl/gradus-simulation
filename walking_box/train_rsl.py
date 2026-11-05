@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
@@ -69,6 +70,8 @@ def main() -> None:
     p.add_argument("--num-threads", type=int, default=16)
     p.add_argument("--episode-steps", type=int, default=400)
     p.add_argument("--run-name", type=str, default="")
+    p.add_argument("--resume", type=Path, default=None,
+                   help="continue from a checkpoint; --iterations is additional")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -81,6 +84,9 @@ def main() -> None:
         num_threads=args.num_threads,
         episode_steps=args.episode_steps,
     )
+    torch.manual_seed(cfg.seed)
+    torch.cuda.manual_seed_all(cfg.seed)
+    np.random.seed(cfg.seed)
     env = QuadrupedCpuEnv(cfg)
     train_cfg = training_config(name, args.steps_per_env)
     settings = {
@@ -93,24 +99,50 @@ def main() -> None:
           f"threads={env.num_threads} device={args.device}")
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)
+    if args.resume:
+        runner.load(str(args.resume), map_location=args.device)
+        print(f"* resumed {args.resume} at iteration {runner.current_learning_iteration}")
     try:
-        # curriculum: stand -> slow walk -> full command range
+        if args.resume:
+            # Fine-tune directly in the full walking regime; re-running the
+            # stand phase would pull the policy back to standing.
+            env.cfg["cmd_min"] = 0.10
+            env.cfg["cmd_max"] = 0.25
+            env.cfg["vel_weight"] = 2.0
+            env.cfg["survival_bonus"] = 0.02
+            env.cfg["lift_weight"] = 0.0
+            env.cfg["gait_amp"] = 0.5
+            print("* fine-tune: cmd=0.10..0.25, nominal bound on")
+            runner.learn(args.iterations)
+            return
+
+        # curriculum: stand -> slow walk -> full command range.
+        # Keep the stand phase short so the policy does not settle into a
+        # stable standing local optimum, and require a non-zero command once
+        # walking starts.
+        env.cfg["cmd_min"] = 0.0
         env.cfg["cmd_max"] = 0.0
         env.cfg["lift_weight"] = 0.0
         env.cfg["gait_amp"] = 0.0
-        first = min(300, args.iterations)
+        first = min(200, args.iterations)
         runner.learn(first, init_at_random_ep_len=True)
         if args.iterations > first:
-            env.cfg["cmd_max"] = 0.10
+            env.cfg["cmd_min"] = 0.05
+            env.cfg["cmd_max"] = 0.15
+            env.cfg["vel_weight"] = 1.5
+            env.cfg["survival_bonus"] = 0.05
             env.cfg["lift_weight"] = 0.0
             env.cfg["gait_amp"] = 0.5
-            print("* curriculum: cmd_max=0.10, nominal bound on")
-            second = min(400, args.iterations - first)
+            print("* curriculum: cmd=0.05..0.15, nominal bound on")
+            second = min(300, args.iterations - first)
             runner.learn(second)
             remaining = args.iterations - first - second
             if remaining > 0:
+                env.cfg["cmd_min"] = 0.10
                 env.cfg["cmd_max"] = 0.25
-                print("* curriculum: cmd_max=0.25")
+                env.cfg["vel_weight"] = 2.0
+                env.cfg["survival_bonus"] = 0.02
+                print("* curriculum: cmd=0.10..0.25")
                 runner.learn(remaining)
     finally:
         env.close()

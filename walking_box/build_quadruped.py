@@ -27,15 +27,17 @@ OUT_XML = ROOT / "urdf/gradus/walk/quadruped.xml"
 
 # prefix, trunk-local hip position
 LEGS = [
-    ("fl", (0.14, 0.09, -0.04)),
-    ("fr", (0.14, -0.09, -0.04)),
-    ("bl", (-0.14, 0.09, -0.04)),
-    ("br", (-0.14, -0.09, -0.04)),
+    ("fl", (0.25, 0.17, -0.05)),
+    ("fr", (0.25, -0.17, -0.05)),
+    ("bl", (-0.25, 0.17, -0.05)),
+    ("br", (-0.25, -0.17, -0.05)),
 ]
 
-TRUNK_Z = 0.6525
-TRUNK_SIZE = (0.18, 0.11, 0.04)
-TRUNK_MASS = 1.5
+# Full size: 0.60 m long x 0.44 m wide x 0.10 m tall.
+# The wider track keeps the centre of mass well inside the support polygon.
+TRUNK_Z = 0.6625
+TRUNK_SIZE = (0.30, 0.22, 0.05)
+TRUNK_MASS = 2.0
 FOOT_RADIUS = 0.015
 
 

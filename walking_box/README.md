@@ -47,51 +47,73 @@ python -m walking_box.train_rsl \
 
 Curriculum:
 
-1. 300 iterations with the nominal gait off, `cmd_max=0` (stand)
-2. 400 at `cmd_max=0.10` m/s with the nominal bound on
-3. 800 at `cmd_max=0.25` m/s
+1. 200 iterations with the nominal gait off, `cmd_max=0` (stand)
+2. 300 at `cmd=0.05..0.15` m/s with the nominal bound on
+3. 1000 at `cmd=0.10..0.25` m/s
+
+Commands are kept strictly positive during walking so the policy cannot settle
+into a stable standing local optimum.
 
 The policy is a 256×256 MLP actor/critic; PPO with 4 epochs, 4 minibatches,
 `lr=3e-4`, adaptive KL. Checkpoints go to
-`logs/walking_box/<run>/model_*.pt`.
+`logs/walking_box/<run>/model_*.pt`. Torch and NumPy are seeded from
+`EnvConfig.seed`, so repeated runs are reproducible.
+
+To fine-tune a checkpoint without replaying the stand/walk curriculum:
+
+```bash
+python -m walking_box.train_rsl \
+    --resume logs/walking_box/walk5_reward/model_800.pt \
+    --iterations 500 --num-envs 64 --steps-per-env 24 \
+    --num-threads 8 --episode-steps 400
+```
 
 ## Evaluate / render
 
 ```bash
 python -m walking_box.evaluate \
-    --ckpt logs/walking_box/walk3/model_1497.pt \
-    --cmd 0.2 --gait-amp 0.4 --steps 400
+    --ckpt logs/walking_box/walk5_reward/model_800.pt \
+    --cmd 0.25 --gait-amp 0.55 --steps 400
 ```
 
-Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps).
+Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps). The camera
+follows the trunk so the gait stays framed.
 
-### Result (walk3, 1500 iterations)
+### Result (walk5_reward, 900 iterations)
+
+Best checkpoint: `logs/walking_box/walk5_reward/model_800.pt`, evaluated at
+`cmd=0.25 m/s` for 400 steps (4 s):
 
 | nominal bound | result |
 |---|---|
-| `gait_amp=0.3` | stable, 0.024 m/s (too slow) |
-| **`gait_amp=0.4`** | **stable, 0.116 m/s, 0.475 m in 4 s, body 0.637 m** |
-| `gait_amp=0.5` | 0.237 m/s but falls at 2.6 s |
+| `gait_amp=0.50` | stable, 0.078 m/s, 0.316 m |
+| **`gait_amp=0.55`** | **stable, 0.146 m/s, 0.656 m, body 0.632 m** |
+| `gait_amp=0.60` | stable, 0.044 m/s, 0.175 m |
 
 The nominal all-leg bound alone (zero residual) reaches ~0.25 m/s but tips
-over; the residual PPO learns to reduce the amplitude and stay upright. The
-next step is to tune the reward/curriculum to keep the faster 0.5-bound gait
-stable.
+over. With the larger box and the velocity-weighted reward, PPO learns a
+stable 0.15 m/s bound at `gait_amp=0.55`. Fine-tuning from `model_800` reached
+0.3 m/s but the policy fell after ~2 s, so the stable 800-iteration checkpoint
+is kept.
 
 ## Reward
 
 ```
-track forward body velocity
-+ hold trunk height and stay upright
+2.0 × track forward body velocity
++ 0.5 × hold trunk height and stay upright
 − tendon tension, action rate, yaw rate
-+ small survival bonus
++ 0.02 survival bonus
 ```
 
 Falls (`z < 0.35`, body up-vector `< 0.5`) terminate the episode.
 
 ## Notes
 
-- The trunk is 1.5 kg; four legs ~1.24 kg each; total ~6.5 kg.
+- The trunk is 0.60 × 0.44 × 0.10 m at 2.0 kg; the hip track is
+  0.50 × 0.34 m. Four legs add ~1.24 kg each; total ~7.0 kg.
+- The earlier 0.36 × 0.22 m trunk was too narrow for the leg length
+  (~0.61 m): the static tip-over margin was only ~12°. The wider/longer box
+  moves the support polygon out to the hips and raises that margin to ~22°.
 - Feet are 15 mm spheres at the `tip` sites; leg mesh collisions are disabled.
 - The servo limits are the single-leg values: 31.4 mm stroke, 200 N.
 - `rsl-rl` handles timeout bootstrapping via

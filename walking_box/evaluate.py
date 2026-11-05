@@ -80,8 +80,7 @@ def main():
     renderer = mujoco.Renderer(model, height=args.size, width=args.size)
     cam = mujoco.MjvCamera()
     cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-    cam.lookat[:] = [0.0, 0.0, 0.30]
-    cam.distance = 1.25
+    cam.distance = 1.6
     cam.azimuth = 135.0
     cam.elevation = -18.0
 
@@ -90,6 +89,9 @@ def main():
         data.qpos[:] = qpos[i]
         data.qvel[:] = qvel[i]
         mujoco.mj_forward(model, data)
+        # follow the trunk so the gait stays framed as the robot moves
+        cam.lookat[:] = data.qpos[:3]
+        cam.lookat[2] -= 0.05
         renderer.update_scene(data, camera=cam)
         frames.append(renderer.render().copy())
     renderer.close()
