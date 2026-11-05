@@ -6,11 +6,11 @@ tension-only sinusoids, so the foot traces a circle.
 
 Interactive (real display)::
 
-    python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
+    python -m onshape_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 
 Headless GIF::
 
-    xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.play \
+    xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.play \
         --xml urdf/gradus/sim/scene.xml \
         --record urdf/gradus/sim/leg_wave.gif --seconds 6
 """

@@ -8,9 +8,14 @@ Full documentation: [PIPELINE.md](PIPELINE.md).
 ## Quick start
 
 ```bash
-python -m mujoco_to_mjcf.build                       # writes urdf/gradus/sim/
-DISPLAY=:0 python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
+cp .env.example .env                                  # fill in Onshape API keys
+python -m onshape_to_mjcf.build                       # writes urdf/gradus/sim/
+python -m onshape_to_mjcf.build --rebuild             # after CAD changes
+DISPLAY=:0 python -m onshape_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 ```
+
+No Onshape key? Use the model zip pinned in the **#reinforcement-learning**
+Discord channel.
 
 ## Files
 
@@ -21,7 +26,7 @@ DISPLAY=:0 python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 | `merge.py` | tendon sites, 8 spatial tendons, servos/motors, rod spring, mass |
 | `play.py` | animated tendon/servo controller |
 | `render.py` | headless pose renders |
-| `config.json` | document IDs + material/servo defaults |
+| `config.json` | Onshape IDs, hole/ring radii, material/servo defaults |
 | `onshape.py` | shared HMAC-signed Onshape REST client |
 | `PIPELINE.md` | full pipeline / model / actuation docs |
 

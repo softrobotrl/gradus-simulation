@@ -13,13 +13,13 @@ The clean ``Leg-Sim`` assembly is reused when it already exists; pass
 
 Examples::
 
-    python -m mujoco_to_mjcf.build
-    python -m mujoco_to_mjcf.build --rebuild
-    python -m mujoco_to_mjcf.build --assembly <element-id> --out /tmp/leg
+    python -m onshape_to_mjcf.build
+    python -m onshape_to_mjcf.build --rebuild
+    python -m onshape_to_mjcf.build --assembly <element-id> --out /tmp/leg
 
-Everything geometric (station order, hole radii/angles, link lengths) is read
-from Onshape; ``mujoco_to_mjcf/config.json`` only holds document IDs and material
-defaults.
+Station order, link lengths and hole angles are read from Onshape.
+``onshape_to_mjcf/config.json`` holds the Onshape IDs, bore/cable-hole and
+tendon-ring radii, plus material and servo defaults.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mujoco_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
+from onshape_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
@@ -110,6 +110,14 @@ def main() -> None:
                    help="create a fresh Leg-Sim assembly from the original")
     p.add_argument("--keep-work", action="store_true",
                    help="keep the onshape-to-robot intermediate in <out>/_o2r")
+    p.add_argument("--bore-radius", type=float, default=None,
+                   help="backbone bore radius used to locate holes (m)")
+    p.add_argument("--hole-radius", type=float, default=None,
+                   help="cable hole radius to detect (m)")
+    p.add_argument("--inner-radius", type=float, default=None,
+                   help="inner tendon-ring radius from the bore centre (m)")
+    p.add_argument("--outer-radius", type=float, default=None,
+                   help="outer tendon-ring radius from the bore centre (m)")
     p.add_argument("--rod-d", type=float, default=None, help="backbone diameter (m)")
     p.add_argument("--rod-E", type=float, default=None, help="backbone E (Pa)")
     p.add_argument("--density", type=float, default=None, help="PLA density (kg/m^3)")
@@ -147,7 +155,7 @@ def main() -> None:
         shutil.rmtree(out / "_o2r", ignore_errors=True)
 
     # --- onshape-to-robot --------------------------------------------------- #
-    work = Path(tempfile.mkdtemp(prefix="leg_o2r_", dir="/tmp/opencode"))
+    work = Path(tempfile.mkdtemp(prefix="leg_o2r_"))
     try:
         config = {
             "url": f"https://cad.onshape.com/documents/{did}/w/{wid}/e/{asm}",
@@ -171,13 +179,24 @@ def main() -> None:
 
         # --- merge ---------------------------------------------------------- #
         merge = [
-            sys.executable, "-m", "mujoco_to_mjcf.merge",
+            sys.executable, "-m", "onshape_to_mjcf.merge",
             "--xml", str(base_xml),
             "--out", str(out / "leg.xml"),
             "--document", did,
             "--workspace", wid,
             "--assembly", asm,
             "--partstudio", ps,
+            "--bore-radius",
+            str(args.bore_radius if args.bore_radius is not None else cfg["backbone_bore_radius_m"]),
+            "--bore-radius-tolerance", str(cfg["backbone_bore_radius_tolerance_m"]),
+            "--hole-radius",
+            str(args.hole_radius if args.hole_radius is not None else cfg["cable_hole_radius_m"]),
+            "--hole-radius-tolerance", str(cfg["cable_hole_radius_tolerance_m"]),
+            "--inner-radius",
+            str(args.inner_radius if args.inner_radius is not None else cfg["inner_ring_radius_m"]),
+            "--outer-radius",
+            str(args.outer_radius if args.outer_radius is not None else cfg["outer_ring_radius_m"]),
+            "--ring-radius-tolerance", str(cfg["ring_radius_tolerance_m"]),
             "--rod-d", str(args.rod_d if args.rod_d is not None else cfg["rod_diameter_m"]),
             "--rod-E", str(args.rod_E if args.rod_E is not None else cfg["rod_youngs_modulus_pa"]),
             "--density", str(args.density if args.density is not None else cfg["pla_density_kg_m3"]),

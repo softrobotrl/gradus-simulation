@@ -9,8 +9,13 @@ import hmac
 import json
 import os
 import secrets
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
+
+# Credentials live in the repo-root .env (see .env.example).
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 class Onshape:
@@ -39,7 +44,7 @@ class Onshape:
             "Authorization": f"On {self.key}:HmacSHA256:{signature}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "mujoco-to-mjcf",
+            "User-Agent": "onshape-to-mjcf",
         }
         data = json.dumps(body) if body is not None else None
         response = requests.request(

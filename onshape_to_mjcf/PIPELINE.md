@@ -11,9 +11,13 @@ radii, hole angles and tendon routing are all read from Onshape.
 ## Quick start
 
 ```bash
-# from the repo root, with ONSHAPE_* credentials in the environment
-python -m mujoco_to_mjcf.build
+# from the repo root
+cp .env.example .env        # fill in ONSHAPE_API / ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY
+python -m onshape_to_mjcf.build
 ```
+
+No Onshape API key? Use the model zip pinned in the **#reinforcement-learning**
+Discord channel.
 
 Output:
 
@@ -36,7 +40,7 @@ DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 Headless render:
 
 ```bash
-xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.render \
+xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.render \
     --xml urdf/gradus/sim/scene.xml --out urdf/gradus/sim
 ```
 
@@ -52,7 +56,11 @@ xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.render \
 | Original assembly | `a388868beab8a28867031630` |
 | Clean sim assembly | `32abf31949e6fa2193ae31aa` (`Leg-Sim`) |
 
-The original assembly is **not modified**. `mujoco_to_mjcf/assembly.py` creates
+Most recent CAD model:
+[Leg-First-Prototype-Print](https://cad.onshape.com/documents/e8da7c50681f40644f3812fb/w/71bd24dd8d18a5e53f7ffb25/e/a388868beab8a28867031630)
+(edit access to the Onshape document is required).
+
+The original assembly is **not modified**. `onshape_to_mjcf/assembly.py` creates
 the clean `Leg-Sim` tab in the same document.
 
 ### CAD facts (read from Onshape)
@@ -85,7 +93,7 @@ The original assembly cannot be exported by `onshape-to-robot`:
 - Without `dof_*` it writes every instance as an independent free body at the
   origin.
 
-`mujoco_to_mjcf/assembly.py` builds a clean assembly with:
+`onshape_to_mjcf/assembly.py` builds a clean assembly with:
 
 - 28 explicit half-disk instances (the two printed halves of each station),
 - one **mate group** per station (merges the halves),
@@ -98,16 +106,16 @@ The original assembly cannot be exported by `onshape-to-robot`:
 ## Pipeline
 
 ```
-mujoco_to_mjcf/config.json          document IDs + material defaults
+onshape_to_mjcf/config.json          IDs, bore/hole/ring radii, material defaults
         │
         ▼
-mujoco_to_mjcf/assembly.py    ensure/reuse Leg-Sim  (--rebuild to recreate)
+onshape_to_mjcf/assembly.py    ensure/reuse Leg-Sim  (--rebuild to recreate)
         │
         ▼
 onshape-to-robot             leg_base.xml + assets/   (temp dir, deleted)
         │
         ▼
-mujoco_to_mjcf/merge.py            sites + tendons + motors + rod spring + mass
+onshape_to_mjcf/merge.py            sites + tendons + motors + rod spring + mass
         │
         ▼
 urdf/gradus/sim/leg.xml      validated (loads, 300 steps, no NaN)
@@ -117,26 +125,28 @@ urdf/gradus/sim/leg.xml      validated (loads, 300 steps, no NaN)
 
 | File | Role |
 |---|---|
-| `mujoco_to_mjcf/build.py` | entry point / orchestrator |
-| `mujoco_to_mjcf/assembly.py` | clean assembly builder + `ensure` / `is_valid` |
-| `mujoco_to_mjcf/merge.py` | MJCF post-processor |
-| `mujoco_to_mjcf/render.py` | headless pose renders |
-| `mujoco_to_mjcf/play.py` | tendon animation (interactive viewer or GIF) |
-| `mujoco_to_mjcf/config.json` | IDs, rod diameter/E, density, force limit |
+| `onshape_to_mjcf/build.py` | entry point / orchestrator |
+| `onshape_to_mjcf/assembly.py` | clean assembly builder + `ensure` / `is_valid` |
+| `onshape_to_mjcf/merge.py` | MJCF post-processor |
+| `onshape_to_mjcf/render.py` | headless pose renders |
+| `onshape_to_mjcf/play.py` | tendon animation (interactive viewer or GIF) |
+| `onshape_to_mjcf/config.json` | IDs, hole/ring radii, rod diameter/E, density, force limit |
 | `urdf/gradus/sim/` | generated model |
 
 ### Options
 
 ```bash
-python -m mujoco_to_mjcf.build --rebuild        # create a fresh Leg-Sim
-python -m mujoco_to_mjcf.build --keep-work      # keep the o2r intermediate
-python -m mujoco_to_mjcf.build --assembly ID    # use a specific Leg-Sim
-python -m mujoco_to_mjcf.build --rod-d 0.004 --rod-E 20e9
-python -m mujoco_to_mjcf.build --density 1240
-python -m mujoco_to_mjcf.build --servo-torque 3.0 --spool-radius 0.012
-python -m mujoco_to_mjcf.build --motors        # force-motor model instead of servos
-python -m mujoco_to_mjcf.build --no-rotate      # don't yaw to ±X/±Y
-python -m mujoco_to_mjcf.build --free-base      # keep the root freejoint
+python -m onshape_to_mjcf.build --rebuild        # create a fresh Leg-Sim
+python -m onshape_to_mjcf.build --keep-work      # keep the o2r intermediate
+python -m onshape_to_mjcf.build --assembly ID    # use a specific Leg-Sim
+python -m onshape_to_mjcf.build --bore-radius 0.004 --hole-radius 0.00105
+python -m onshape_to_mjcf.build --inner-radius 0.016 --outer-radius 0.022
+python -m onshape_to_mjcf.build --rod-d 0.004 --rod-E 20e9
+python -m onshape_to_mjcf.build --density 1240
+python -m onshape_to_mjcf.build --servo-torque 3.0 --spool-radius 0.012
+python -m onshape_to_mjcf.build --motors        # force-motor model instead of servos
+python -m onshape_to_mjcf.build --no-rotate      # don't yaw to ±X/±Y
+python -m onshape_to_mjcf.build --free-base      # keep the root freejoint
 ```
 
 ---
@@ -217,14 +227,16 @@ Mapping from a real servo:
 | no-load speed `ω_max` | rate-limit `ctrl` (not in the XML) |
 | spool radius | `r_spool` |
 
-Placeholders in `mujoco_to_mjcf/config.json`: `2 N·m`, `r = 10 mm`, `180°` →
+Placeholders in `onshape_to_mjcf/config.json`: `2 N·m`, `r = 10 mm`, `180°` →
 `F_max = 200 N`, `stroke = 31.4 mm`.
 
 ### Important: initialise `data.ctrl`
 
 For a position servo, `data.ctrl = 0` is **not "no pull"** — 0 is below the
-`ctrlrange` and clamps to **maximum pull**. At reset, set every servo to its
-rest length:
+`ctrlrange` and clamps to **maximum pull**. With the default gains that is
+`kp · stroke = 5000 × 0.0314 ≈ 157 N` per tendon, not a measured hardware
+pretension; it is simply the servo force at full stroke command. At reset, set
+every servo to its rest length:
 
 ```python
 data.ctrl[:] = model.actuator_ctrlrange[:, 1]   # L0 for all tendons
@@ -286,7 +298,7 @@ DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 Headless (no display):
 
 ```bash
-xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.render \
+xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.render \
     --xml urdf/gradus/sim/scene.xml --out urdf/gradus/sim
 ```
 
@@ -299,17 +311,17 @@ Poses written: `rest`, `inner_front`, `inner_back`, `inner_left`,
 
 ### Drive it
 
-`mujoco_to_mjcf/play.py` pulls the eight tendons with phase-shifted, tension-only
+`onshape_to_mjcf/play.py` pulls the eight tendons with phase-shifted, tension-only
 sinusoids, so the foot traces a circle:
 
 ```bash
-DISPLAY=:0 python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
+DISPLAY=:0 python -m onshape_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 ```
 
 Headless GIF:
 
 ```bash
-xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.play \
+xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.play \
     --xml urdf/gradus/sim/scene.xml \
     --record urdf/gradus/sim/leg_wave.gif --seconds 6
 ```
@@ -332,7 +344,7 @@ reports `:10`.
 
 ## Validation
 
-`mujoco_to_mjcf/build.py` loads the merged MJCF, steps 300 times and checks for
+`onshape_to_mjcf/build.py` loads the merged MJCF, steps 300 times and checks for
 NaN, then prints:
 
 ```
@@ -345,6 +357,9 @@ NaN, then prints:
 
 | Parameter | Effect |
 |---|---|
+| `--bore-radius` | backbone bore radius used to locate holes (m) |
+| `--hole-radius` | cable hole radius to detect (m) |
+| `--inner-radius` / `--outer-radius` | tendon-ring radii from the bore centre (m) |
 | `--rod-d` | backbone diameter (m); `k ∝ d⁴` |
 | `--rod-E` | backbone Young's modulus (Pa); `k ∝ E` |
 | `--density` | PLA density (kg/m³) |
@@ -358,7 +373,9 @@ NaN, then prints:
 | `--free-base` | keep a floating root instead of a fixed base |
 | `--no-rotate` | leave the CAD's 45° hole orientation |
 
-`mujoco_to_mjcf/config.json` holds the defaults; CLI flags override them.
+`onshape_to_mjcf/config.json` holds the defaults (including the hole/ring match
+tolerances); CLI flags override them. After a CAD change, run with `--rebuild`
+so the `Leg-Sim` assembly is regenerated from the current model.
 
 ---
 
@@ -377,4 +394,5 @@ NaN, then prints:
   `Leg-Sim` tab; delete old ones in the Onshape UI.
 - `onshape-to-robot` reports “no dynamics” because the Onshape parts have no
   material; `merge.py` replaces the `1e-9 kg` inertials with mesh-derived
-  mass.
+  mass. **Mass assumes solid parts (100 % infill)**; printed parts with a
+  lower infill will be lighter than the model.

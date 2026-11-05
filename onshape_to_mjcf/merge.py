@@ -3,20 +3,20 @@
 
 Reads the MJCF produced by ``onshape-to-robot`` and injects:
 
-* tendon sites at the real 2.1 mm cable holes (inner r=16 mm on every disk,
-  outer r=22 mm on the hip and the upper six disks),
+* tendon sites at the real cable holes (inner/outer ring radii and hole/bore
+  sizes are read from ``config.json``),
 * eight ``<spatial>`` tendons (4 inner full-length, 4 outer upper-half),
-* tension-only ``<motor>`` actuators,
+* tension-only ``<position>`` servos (default) or ``<motor>`` actuators,
 * isotropic ball-joint stiffness representing the fibreglass backbone,
 * mesh-derived mass (PLA density) instead of onshape-to-robot's 1e-9 kg,
 * an optional fixed base and a --45 deg yaw so tendon directions are +-X/+-Y.
 
-The hole geometry and the station transforms are read from Onshape, so there
-is no hand-maintained parameter file.
+Station transforms and hole positions come from Onshape; bore/cable-hole and
+ring sizes come from ``config.json``.
 
 Usage::
 
-    python -m mujoco_to_mjcf.merge \
+    python -m onshape_to_mjcf.merge \
         --xml /tmp/leg/leg.xml \
         --assembly <assembly-element-id> \
         --partstudio <part-studio-element-id> \
@@ -26,28 +26,40 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
+from pathlib import Path
 
 import numpy as np
 
-from mujoco_to_mjcf.onshape import Onshape
+from onshape_to_mjcf.onshape import Onshape
 
-DEFAULT_DOC = "e8da7c50681f40644f3812fb"
-DEFAULT_WS = "71bd24dd8d18a5e53f7ffb25"
-DEFAULT_PS = "cd41842204143b0c2cc06855"
-DEFAULT_ASM = "32abf31949e6fa2193ae31aa"
-
-INNER_R = 0.016
-OUTER_R = 0.022
+CONFIG_PATH = Path(__file__).with_name("config.json")
 
 
 # --------------------------------------------------------------------------- #
 # Onshape extraction
 # --------------------------------------------------------------------------- #
-def load_part_holes(did: str, wid: str, psid: str) -> dict:
-    """Return {partId: {inner: [(x,y)...], outer: [...], zc: m}} in part-local m."""
+def load_part_holes(
+    did: str,
+    wid: str,
+    psid: str,
+    *,
+    bore_radius: float,
+    bore_tolerance: float,
+    hole_radius: float,
+    hole_tolerance: float,
+    inner_radius: float,
+    outer_radius: float,
+    ring_tolerance: float,
+) -> dict:
+    """Return {partId: {inner: [(x,y)...], outer: [...], zc: m}} in part-local m.
+
+    The hole/bore radii and ring distances come from ``config.json`` so a CAD
+    revision only needs a config update, not a code change.
+    """
     c = Onshape()
     st, data = c.get(f"/api/v9/partstudios/d/{did}/w/{wid}/e/{psid}/bodydetails")
     if st != 200:
@@ -71,9 +83,9 @@ def load_part_holes(did: str, wid: str, psid: str) -> dict:
                 continue
             r = s.get("radius", 0.0)
             o = s.get("origin", {})
-            if abs(r - 0.004069) < 2e-4:          # backbone bore
+            if abs(r - bore_radius) < bore_tolerance:      # backbone bore
                 bore = (o["x"], o["y"])
-            elif 9e-4 < r < 1.3e-3:                # 2.1 mm cable hole
+            elif abs(r - hole_radius) < hole_tolerance:    # cable hole
                 holes.append((o["x"], o["y"]))
         if bore is None or not holes:
             continue
@@ -82,9 +94,9 @@ def load_part_holes(did: str, wid: str, psid: str) -> dict:
         for hx, hy in holes:
             rel = (hx - bore[0], hy - bore[1])
             rr = math.hypot(*rel)
-            if abs(rr - INNER_R) < 1e-3:
+            if abs(rr - inner_radius) < ring_tolerance:
                 inner.append((hx, hy))
-            elif abs(rr - OUTER_R) < 1e-3:
+            elif abs(rr - outer_radius) < ring_tolerance:
                 outer.append((hx, hy))
         out[body["id"]] = {
             "inner": inner,
@@ -153,7 +165,18 @@ def quat_z(angle: float) -> str:
 # Main merge
 # --------------------------------------------------------------------------- #
 def merge(args) -> None:
-    parts = load_part_holes(args.document, args.workspace, args.partstudio)
+    parts = load_part_holes(
+        args.document,
+        args.workspace,
+        args.partstudio,
+        bore_radius=args.bore_radius,
+        bore_tolerance=args.bore_radius_tolerance,
+        hole_radius=args.hole_radius,
+        hole_tolerance=args.hole_radius_tolerance,
+        inner_radius=args.inner_radius,
+        outer_radius=args.outer_radius,
+        ring_tolerance=args.ring_radius_tolerance,
+    )
     stations = load_stations(args.document, args.workspace, args.assembly, parts)
     print(f"* {len(parts)} parts, {len(stations)} stations")
 
@@ -342,14 +365,32 @@ def merge(args) -> None:
 
 
 def main():
+    cfg = json.loads(CONFIG_PATH.read_text())
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--xml", required=True, help="onshape-to-robot MJCF")
     p.add_argument("--out", required=True, help="merged MJCF output")
-    p.add_argument("--document", default=DEFAULT_DOC)
-    p.add_argument("--workspace", default=DEFAULT_WS)
-    p.add_argument("--assembly", default=DEFAULT_ASM)
-    p.add_argument("--partstudio", default=DEFAULT_PS)
+    p.add_argument("--document", default=cfg["document_id"])
+    p.add_argument("--workspace", default=cfg["workspace_id"])
+    p.add_argument("--assembly", default=cfg["sim_assembly_id"])
+    p.add_argument("--partstudio", default=cfg["partstudio_id"])
+    p.add_argument("--bore-radius", type=float, default=cfg["backbone_bore_radius_m"],
+                   help="backbone bore radius (m)")
+    p.add_argument("--bore-radius-tolerance", type=float,
+                   default=cfg["backbone_bore_radius_tolerance_m"],
+                   help="backbone bore radius match tolerance (m)")
+    p.add_argument("--hole-radius", type=float, default=cfg["cable_hole_radius_m"],
+                   help="cable hole radius (m)")
+    p.add_argument("--hole-radius-tolerance", type=float,
+                   default=cfg["cable_hole_radius_tolerance_m"],
+                   help="cable hole radius match tolerance (m)")
+    p.add_argument("--inner-radius", type=float, default=cfg["inner_ring_radius_m"],
+                   help="inner tendon-ring radius from bore centre (m)")
+    p.add_argument("--outer-radius", type=float, default=cfg["outer_ring_radius_m"],
+                   help="outer tendon-ring radius from bore centre (m)")
+    p.add_argument("--ring-radius-tolerance", type=float,
+                   default=cfg["ring_radius_tolerance_m"],
+                   help="ring radius match tolerance (m)")
     p.add_argument("--rod-d", type=float, default=0.0079375, help="rod diameter (m); 5/16 in")
     p.add_argument("--rod-E", type=float, default=30e9, help="rod Young's modulus (Pa)")
     p.add_argument("--density", type=float, default=1240.0, help="PLA density kg/m^3")

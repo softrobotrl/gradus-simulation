@@ -4,13 +4,21 @@ Monorepo for the Gradus tendon-driven robots.
 
 ## Projects
 
-### MuJoCo segmented leg (`mujoco_to_mjcf/`)
+### Onshape → MuJoCo segmented leg (`onshape_to_mjcf/`)
 
-Onshape → `onshape-to-robot` → merged MuJoCo MJCF.
+CAD-driven export: Onshape assembly → `onshape-to-robot` → merged MuJoCo MJCF.
 
-- Entry: `python -m mujoco_to_mjcf.build`
-- Docs: [mujoco_to_mjcf/PIPELINE.md](mujoco_to_mjcf/PIPELINE.md)
+Most recent CAD model:
+[Leg-First-Prototype-Print](https://cad.onshape.com/documents/e8da7c50681f40644f3812fb/w/71bd24dd8d18a5e53f7ffb25/e/a388868beab8a28867031630)
+(edit access to the Onshape document is required).
+
+- Entry: `python -m onshape_to_mjcf.build`
+- After CAD changes, rebuild the sim assembly: `python -m onshape_to_mjcf.build --rebuild`
+- Docs: [onshape_to_mjcf/PIPELINE.md](onshape_to_mjcf/PIPELINE.md)
 - Output: `urdf/gradus/sim/` (gitignored; regenerate on demand)
+
+No Onshape API key? Use the model zip pinned in the **#reinforcement-learning**
+Discord channel.
 
 ### Genesis single-leg (`genesis_leg/`)
 
@@ -22,7 +30,7 @@ forces and PPO training/evaluation.
 
 ## Repository structure
 
-* `mujoco_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
+* `onshape_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
 * `genesis_leg/` — Genesis single-leg env + PPO.
 * `pipeline/` — shared STL → XML helper and OpenCR assets used by `genesis_leg`.
 * `urdf/gradus/sim/` — generated MuJoCo model (gitignored).
@@ -36,7 +44,7 @@ forces and PPO training/evaluation.
 MuJoCo:
 
 ```bash
-python -m mujoco_to_mjcf.build
+python -m onshape_to_mjcf.build
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 ```
 
@@ -71,4 +79,11 @@ Then activate the environment:
 
 ```bash
 conda activate gradus-rl
+```
+
+Copy `.env.example` to `.env` and fill in your Onshape API credentials (needed
+for `onshape_to_mjcf.build`):
+
+```bash
+cp .env.example .env
 ```
