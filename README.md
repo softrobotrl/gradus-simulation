@@ -42,9 +42,9 @@ python -m pipeline.run_go2_genesis --terrain mixed --seed 3 --difficulty 0.5 --b
 - `--grid`: N for an N x N grid of tiles (default 4, so 8 m x 8 m). The robot always starts on a flat tile, so `--grid 1` is flat ground.
 - `--backend`: `gpu` (default, NVIDIA only) or `cpu` (use this on macOS).
 
-Go2 holds its standing pose; it has no walking policy yet. Left-drag it with the mouse to pull it onto the terrain. The first build takes about 40 s while Genesis compiles.
+Go2 holds its standing pose; it has no walking policy yet. Left-drag moves it: grab the side of the body and lift it clear before moving it, because dragging it along the ground tips it over. Rerun the command to reset. The first build takes about 40 s while Genesis compiles; its "SDF pre-processing" and "not watertight" warnings are expected.
 
-To add the terrain to another Genesis scene, use `generate()` from `pipeline/terrain.py` and `add_terrain()` from `pipeline/run_go2_genesis.py`.
+To add the terrain to another Genesis scene, use `generate()` from `pipeline/terrain.py` and `add_terrain()` from `pipeline/run_go2_genesis.py`; its docstring lists the limits for batched envs.
 
 ## Repository structure
 
