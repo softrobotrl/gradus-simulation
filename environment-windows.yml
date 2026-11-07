@@ -24,8 +24,14 @@ dependencies:
     - trimesh
     - networkx
     - scipy
+<<<<<<< Updated upstream
     # CAD -> MJCF export (see onshape_to_mjcf/PIPELINE.md)
     - onshape-to-robot
     - python-dotenv
     - requests
     - imageio
+=======
+    # Genesis runs on the NVIDIA GPU natively on Windows (see genesis_leg/README.md)
+    - genesis-world==1.4.3
+    - rsl-rl-lib==5.5.1
+>>>>>>> Stashed changes

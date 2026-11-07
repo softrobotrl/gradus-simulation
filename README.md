@@ -28,6 +28,14 @@ forces and PPO training/evaluation.
 - Docs: [genesis_leg/README.md](genesis_leg/README.md)
 - Shared CAD helper: `pipeline/` (`config.py`, `stl_to_xml.py`, OpenCR STLs/YAML)
 
+### Onshape leg in Genesis (`genesis_leg/leg*.py`)
+
+Loads the merged `leg.xml` from the Onshape export into Genesis, with its tendons
+and servos, and checks it against MuJoCo. No RL task yet.
+
+- Entry: `python -m genesis_leg.leg_validate --xml urdf/gradus/sim/leg.xml`
+- Docs: [genesis_leg/README.md](genesis_leg/README.md#the-onshape-leg-in-genesis)
+
 ## Repository structure
 
 * `onshape_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
