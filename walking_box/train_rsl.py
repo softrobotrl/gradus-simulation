@@ -64,7 +64,7 @@ def training_config(name: str, steps: int) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--num-envs", type=int, default=64)
+    p.add_argument("--num-envs", type=int, default=128)
     p.add_argument("--iterations", type=int, default=2000)
     p.add_argument("--steps-per-env", type=int, default=24)
     p.add_argument("--num-threads", type=int, default=16)
