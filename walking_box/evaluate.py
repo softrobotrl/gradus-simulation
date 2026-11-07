@@ -31,6 +31,9 @@ def main():
     p.add_argument("--gait-mode", choices=["diagonal", "bound"], default="diagonal")
     p.add_argument("--action-dim", type=int, default=32)
     p.add_argument("--period", type=float, default=0.8)
+    p.add_argument("--swing-frac", type=float, default=0.5)
+    p.add_argument("--stance-amp", type=float, default=0.0)
+    p.add_argument("--residual-scale", type=float, default=0.5)
     p.add_argument("--steps", type=int, default=400)
     p.add_argument("--every", type=int, default=4)
     p.add_argument("--size", type=int, default=480)
@@ -49,6 +52,9 @@ def main():
         gait_mode=args.gait_mode,
         action_dim=args.action_dim,
         period=args.period,
+        swing_frac=args.swing_frac,
+        stance_amp=args.stance_amp,
+        residual_scale=args.residual_scale,
     )
     env = QuadrupedCpuEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")

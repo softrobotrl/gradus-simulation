@@ -28,6 +28,9 @@ def main() -> None:
     p.add_argument("--cmd", type=float, default=0.25)
     p.add_argument("--gait-amp", type=float, default=0.8)
     p.add_argument("--period", type=float, default=0.86)
+    p.add_argument("--swing-frac", type=float, default=0.5)
+    p.add_argument("--stance-amp", type=float, default=0.0)
+    p.add_argument("--residual-scale", type=float, default=0.5)
     p.add_argument("--steps", type=int, default=400)
     p.add_argument("--seeds", type=int, default=10)
     p.add_argument("--noise", type=float, default=1.0,
@@ -42,6 +45,9 @@ def main() -> None:
         gait_mode="diagonal",
         action_dim=32,
         period=args.period,
+        swing_frac=args.swing_frac,
+        stance_amp=args.stance_amp,
+        residual_scale=args.residual_scale,
         reset_noise=args.noise,
     )
     env = QuadrupedCpuEnv(cfg)

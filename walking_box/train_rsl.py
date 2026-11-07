@@ -78,6 +78,8 @@ def main() -> None:
                    help="override PPO learning rate after loading")
     p.add_argument("--std", type=float, default=None,
                    help="freeze the policy action std at this value")
+    p.add_argument("--zero-actor-output", action="store_true",
+                   help="zero the actor's last layer so training starts from the nominal gait")
     p.add_argument("--fall-penalty", type=float, default=None,
                    help="override the reward fall penalty")
     p.add_argument("--tilt-weight", type=float, default=None,
@@ -88,6 +90,30 @@ def main() -> None:
                    help="override the nominal gait amplitude")
     p.add_argument("--period", type=float, default=None,
                    help="override the nominal gait period")
+    p.add_argument("--swing-frac", type=float, default=None,
+                   help="override the swing fraction of the gait cycle")
+    p.add_argument("--stance-amp", type=float, default=None,
+                   help="override the stance-phase back-tendon pull")
+    p.add_argument("--residual-scale", type=float, default=None,
+                   help="override the policy residual scale")
+    p.add_argument("--cmd-min", type=float, default=None,
+                   help="override the minimum forward command")
+    p.add_argument("--cmd-max", type=float, default=None,
+                   help="override the maximum forward command")
+    p.add_argument("--vel-weight", type=float, default=None,
+                   help="override the velocity-tracking reward weight")
+    p.add_argument("--vel-sigma", type=float, default=None,
+                   help="override the velocity-tracking tolerance")
+    p.add_argument("--progress-weight", type=float, default=None,
+                   help="override the forward-progress reward weight")
+    p.add_argument("--lat-weight", type=float, default=None,
+                   help="override the lateral-velocity penalty weight")
+    p.add_argument("--yaw-weight", type=float, default=None,
+                   help="override the yaw-rate penalty weight")
+    p.add_argument("--heading-weight", type=float, default=None,
+                   help="override the heading penalty weight")
+    p.add_argument("--slip-weight", type=float, default=None,
+                   help="override the stance-slip penalty weight")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -137,6 +163,11 @@ def main() -> None:
             dist.std.data.fill_(args.std)
             dist.std.requires_grad_(False)
         print(f"* fixed action std at {args.std}")
+    if args.zero_actor_output:
+        last = runner.alg.actor.mlp[-1]
+        torch.nn.init.zeros_(last.weight)
+        torch.nn.init.zeros_(last.bias)
+        print("* zeroed actor output layer (start from the nominal gait)")
     try:
         if args.resume:
             # Fine-tune directly in the full walking regime; re-running the
@@ -165,8 +196,34 @@ def main() -> None:
                 env.cfg["gait_amp"] = args.gait_amp
             if args.period is not None:
                 env.cfg["period"] = args.period
-            print(f"* fine-tune: diagonal trot, cmd=0.10..0.25, "
-                  f"amp={env.cfg['gait_amp']:.2f}, period={env.cfg['period']:.2f}, "
+            if args.swing_frac is not None:
+                env.cfg["swing_frac"] = args.swing_frac
+            if args.stance_amp is not None:
+                env.cfg["stance_amp"] = args.stance_amp
+            if args.residual_scale is not None:
+                env.cfg["residual_scale"] = args.residual_scale
+            if args.cmd_min is not None:
+                env.cfg["cmd_min"] = args.cmd_min
+            if args.cmd_max is not None:
+                env.cfg["cmd_max"] = args.cmd_max
+            if args.vel_weight is not None:
+                env.cfg["vel_weight"] = args.vel_weight
+            if args.vel_sigma is not None:
+                env.cfg["vel_sigma"] = args.vel_sigma
+            if args.progress_weight is not None:
+                env.cfg["progress_weight"] = args.progress_weight
+            if args.lat_weight is not None:
+                env.cfg["lat_weight"] = args.lat_weight
+            if args.yaw_weight is not None:
+                env.cfg["yaw_weight"] = args.yaw_weight
+            if args.heading_weight is not None:
+                env.cfg["heading_weight"] = args.heading_weight
+            if args.slip_weight is not None:
+                env.cfg["slip_weight"] = args.slip_weight
+            print(f"* fine-tune: diagonal trot, cmd={env.cfg['cmd_min']:.2f}.."
+                  f"{env.cfg['cmd_max']:.2f}, amp={env.cfg['gait_amp']:.2f}, "
+                  f"period={env.cfg['period']:.2f}, swing={env.cfg['swing_frac']:.2f}, "
+                  f"stance={env.cfg['stance_amp']:.2f}, "
                   f"reset_noise={env.cfg['reset_noise']:.2f}, stronger yaw/lateral")
             runner.learn(args.iterations)
             return

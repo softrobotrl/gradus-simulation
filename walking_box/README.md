@@ -13,8 +13,9 @@ forward walking only, PPO, no surrogate model.
 - 4 legs × 8 tendon servos = 32 actuators.
 - **Diagonal trot nominal**: the FL+BR diagonal swings while FR+BL is in
   stance, then the pairs swap. During swing, the back tendons pull the foot
-  rearward and lift it; the stance diagonal stays passive. Pulling front and
-  back together cancels propulsion because both directions shorten the leg.
+  rearward and lift it. A stance-phase back-tendon pull can also push the body
+  forward; `swing_frac < 0.5` adds double support. Pulling front and back
+  together cancels propulsion because both directions shorten the leg.
 - **32 policy actions**: one residual tendon pull per actuator. The policy can
   correct every leg independently around the nominal trot.
 - 120 observations: trunk quat, body velocity, angular velocity, height error,
@@ -52,8 +53,10 @@ Curriculum:
 2. 300 at `cmd=0.05..0.15` m/s with the diagonal trot on
 3. 1150 at `cmd=0.10..0.25` m/s
 
-Commands are kept strictly positive during walking so the policy cannot settle
-into a stable standing local optimum.
+Commands are kept strictly positive during walking to discourage a standing
+local optimum.  Stability-heavy fine-tunes can still collapse to standing if
+the velocity/progress weights are too low; the current robust fine-tune keeps
+`vel_weight=3.0` and `progress_weight=1.0`.
 
 The policy is a 256×256 MLP actor/critic; PPO with 4 epochs, 4 minibatches,
 `lr=3e-4`, adaptive KL. Checkpoints go to
@@ -69,17 +72,41 @@ python -m walking_box.train_rsl \
     --num-threads 8 --episode-steps 400 --run-name walk_diag_yaw
 ```
 
+The current robust gait starts from the earlier robust checkpoint with the
+actor output layer zeroed, so training begins exactly on the new nominal:
+
+```bash
+python -m walking_box.train_rsl \
+    --resume logs/walking_box/walk_diag_robust/model_2100.pt \
+    --num-envs 64 --iterations 500 --steps-per-env 24 \
+    --num-threads 8 --episode-steps 400 --run-name walk_diag_robust_fast \
+    --entropy-coef 0 --learning-rate 2e-4 --std 0.15 --zero-actor-output \
+    --fall-penalty 5 --tilt-weight 3 --reset-noise 0.0 \
+    --gait-amp 0.7 --period 0.50 --swing-frac 0.5 --stance-amp 0.1 \
+    --residual-scale 0.3 --cmd-min 0.10 --cmd-max 0.15 \
+    --vel-weight 3.0 --vel-sigma 0.15 --progress-weight 1.0 \
+    --slip-weight 0.2 --lat-weight 1.0 --yaw-weight 0.8
+```
+
+`--zero-actor-output` zeroes the last actor layer, so the first rollout is the
+nominal gait rather than the old policy's residuals.  `--swing-frac`,
+`--stance-amp`, and `--residual-scale` control the nominal trot and how much
+authority the policy has around it.  The checkpoint is evaluated with
+`--residual-scale 0.35` at `cmd=0.18`.
+
 For robust fine-tuning, add `--reset-noise 1.0` to perturb each reset by
 ±20 mm in xy, ±0.12 rad yaw, ±0.03 rad roll/pitch, and ±0.02 m/s base
-velocity. `--gait-amp` and `--period` override the nominal gait used during
-the fine-tune.
+velocity.  `--gait-amp`, `--period`, `--swing-frac`, `--stance-amp`, and
+`--residual-scale` override the nominal gait and residual authority used
+during the fine-tune.
 
 ## Evaluate / render
 
 ```bash
 python -m walking_box.evaluate \
-    --ckpt logs/walking_box/walk_diag_robust/model_2100.pt \
-    --cmd 0.18 --gait-amp 0.8 --period 0.86 --steps 400
+    --ckpt logs/walking_box/walk_diag_robust_fast/model_2550.pt \
+    --cmd 0.18 --gait-amp 0.7 --period 0.50 \
+    --swing-frac 0.5 --stance-amp 0.1 --residual-scale 0.35 --steps 400
 ```
 
 Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps at
@@ -91,14 +118,65 @@ resets:
 
 ```bash
 python -m walking_box.robustness \
-    --ckpt logs/walking_box/walk_diag_robust/model_2100.pt \
-    --cmd 0.18 --gait-amp 0.8 --period 0.86 --seeds 20
+    --ckpt logs/walking_box/walk_diag_robust_fast/model_2550.pt \
+    --cmd 0.18 --gait-amp 0.7 --period 0.50 \
+    --swing-frac 0.5 --stance-amp 0.1 --residual-scale 0.35 --seeds 20
 ```
 
 The default perturbation is ±20 mm in xy, ±0.12 rad yaw, ±0.03 rad
 roll/pitch, and ±0.02 m/s base velocity.
 
-### Result (walk_diag_robust, 800 iterations)
+### Result (walk_diag_robust_fast, 500 iterations)
+
+The earlier robust policy was safe but slow (0.069 m/s).  Two problems kept it
+there: the nominal trot had no stance-phase pull, and the stance-slip penalty
+was effectively unbounded.  On the faster nominal the raw slip term reached
+−132, dwarfing every other reward term.  This run changes both:
+
+- the nominal trot uses `amp=0.7`, `period=0.50`, `swing_frac=0.5`,
+  `stance_amp=0.1`; the stance-phase pull pushes the body forward instead of
+  leaving the stance diagonal passive;
+- the slip penalty is contact-aware and capped, so it can no longer dominate
+  the reward;
+- the actor's last layer is zeroed, so fine-tuning starts on the stable
+  nominal instead of fighting the old policy.
+
+Best checkpoint: `walk_diag_robust_fast/model_2550.pt`.  Evaluated at
+`cmd=0.18`, `gait_amp=0.7`, `period=0.50`, `swing_frac=0.5`,
+`stance_amp=0.1`, `residual_scale=0.35`, 400 steps (4 s):
+
+| metric | result |
+|---|---|
+| mean forward speed | 0.131 m/s |
+| distance | 0.526 m |
+| lateral drift | −0.095 m |
+| yaw | −0.10 rad |
+| trunk height | 0.656 m |
+| minimum trunk height | 0.644 m |
+| minimum up-vector | 0.996 |
+| fall | no |
+
+Across 20 perturbed initial states, all 20 survive the full 4 s; mean forward
+distance is 0.144 m.  The perturbed starts are deliberately harsher than the
+nominal demo; the policy stays upright, but some starts settle into a slower
+limit cycle.
+
+Command sweep on the same checkpoint:
+
+| command | mean vx | distance | lateral drift | yaw | fall |
+|---|---|---|---|---|---|
+| 0.12 | 0.114 | 0.456 m | −0.124 m | −0.11 | no |
+| 0.15 | 0.121 | 0.485 m | −0.091 m | −0.24 | no |
+| **0.18** | **0.133** | **0.526 m** | **−0.095 m** | **−0.10** | **no** |
+| 0.20 | 0.129 | 0.514 m | −0.121 m | −0.17 | no |
+
+A more aggressive nominal (`amp=1.1`, `period=0.50`, `stance_amp=0.2`)
+walks 0.108 m/s open-loop and trained to 0.123 m/s, but only 4/20 perturbed
+starts survived.  It was rejected in favor of the robust nominal above.  A
+300-iteration straightness fine-tune with stronger heading/lateral weights
+over-corrected into a standing local optimum, so `model_2550` is kept.
+
+### Earlier robust result (walk_diag_robust, 800 iterations)
 
 The robust fine-tune resumed from `walk_diag_yaw/model_1600.pt` with
 reset-state randomization and a cleaner/slower nominal gait:
@@ -182,23 +260,32 @@ is kept.
 ## Reward
 
 ```
-2.0 × forward velocity tracking (sigma 0.10 m/s)
-+ 0.7 × forward progress relative to command
+3.0–4.0 × forward velocity tracking (sigma 0.15 m/s)
++ 1.0–1.5 × forward progress relative to command
 + 0.5 × hold trunk height and stay upright
-− lateral-velocity penalty
-− yaw-rate and heading penalties
+− tilt, lateral-velocity, yaw-rate, and heading penalties
 + 0.3 × swing-foot clearance
-− stance-foot slip penalty
+− contact-aware stance-slip penalty
 − tendon tension and action rate
-− 1.0 on a fall
+− fall penalty
 ```
 
-The swing target is `0.035 m` and the stance target is `0.015 m`. The
-yaw/lateral fine-tune raises `lat_weight` to 2.0, `yaw_weight` to 1.5, and
-`heading_weight` to 1.0. The robust fine-tune additionally uses
-`reset_noise=1.0`, `fall_penalty=5`, and `tilt_weight=3`. There is no survival
-bonus, so standing still is not rewarded once a command is present. Falls
-(`z < 0.35`, body up-vector `< 0.5`) terminate the episode.
+The slip penalty is evaluated only on stance feet that are actually near the
+floor (`foot_z < 0.03 m`) and is capped:
+
+```
+r_slip = -mean(clip(|v_slip| / 0.20, 0, 2)**2)
+```
+
+This matters: the previous unbounded `(v_slip/0.05)**2` term reached −132 on
+the faster nominal and dominated every other reward, which taught the policy
+to creep.  The current term is about −1 to −3 on the same gait.
+
+The swing target is `0.035 m` and the stance target is `0.015 m`.  The current
+robust fine-tune uses `fall_penalty=5`, `tilt_weight=3`, `lat_weight=1.0`,
+`yaw_weight=0.8`, and `heading_weight=1.0`.  There is no survival bonus, so
+standing still is not rewarded once a command is present.  Falls (`z < 0.35`,
+body up-vector `< 0.5`) terminate the episode.
 
 ## Notes
 
@@ -210,5 +297,8 @@ bonus, so standing still is not rewarded once a command is present. Falls
 - Feet are 15 mm spheres at the `tip` sites; leg mesh collisions are disabled.
 - The servo limits are the single-leg values: 31.4 mm stroke, 200 N, with
   `kp=8000`, `kv=80` for the retrained diagonal-trot model.
+- The current robust nominal is `amp=0.7`, `period=0.50`, `swing_frac=0.5`,
+  `stance_amp=0.1`.  The faster `amp=1.1` / `period=0.50` / `stance_amp=0.2`
+  nominal is not robust to perturbed starts.
 - `rsl-rl` handles timeout bootstrapping via
   `genesis_leg.runner:LegPPO`.

@@ -33,13 +33,16 @@ class EnvConfig:
     cmd_min: float = 0.10
     cmd_max: float = 0.25
     vel_weight: float = 2.0
-    vel_sigma: float = 0.10
+    vel_sigma: float = 0.15
     progress_weight: float = 0.7
     survival_bonus: float = 0.0
     lift_height: float = 0.035
     stance_height: float = 0.015
     lift_weight: float = 0.3
-    slip_weight: float = 0.3
+    slip_weight: float = 0.2
+    contact_z: float = 0.03
+    slip_scale: float = 0.20
+    slip_cap: float = 2.0
     lat_weight: float = 1.0
     yaw_weight: float = 1.0
     heading_weight: float = 0.5
@@ -47,6 +50,8 @@ class EnvConfig:
     fall_penalty: float = 1.0
     gait_amp: float = 0.7
     gait_mode: str = "diagonal"   # "diagonal" or "bound"
+    swing_frac: float = 0.5       # fraction of the cycle each leg is swinging
+    stance_amp: float = 0.0       # back-tendon pull during stance
     residual_scale: float = 0.5
     action_dim: int = 32
     reset_noise: float = 0.0      # scales initial-state perturbation
@@ -190,7 +195,7 @@ class QuadrupedCpuEnv:
         wz = float(d.qvel[5])
         foot_z = d.site_xpos[self.tip_ids, 2]
         p_leg = self._leg_phase(float(self.phase[i]))
-        swing = p_leg < 0.5
+        swing = p_leg < self.cfg["swing_frac"]
         target_z = np.where(
             swing,
             self.cfg.get("lift_height", 0.035),
@@ -214,8 +219,14 @@ class QuadrupedCpuEnv:
         foot_vxy = (foot_xy - self.prev_foot_xy[i]) / self.dt
         slip = np.linalg.norm(foot_vxy, axis=1)
         stance = ~swing
-        r_slip = (-0.5 * float(np.mean((slip[stance] / 0.05) ** 2))
-                  if np.any(stance) else 0.0)
+        contact = foot_z < self.cfg["contact_z"]
+        active = stance & contact
+        if np.any(active):
+            rel = np.clip(slip[active] / self.cfg["slip_scale"], 0.0,
+                          self.cfg["slip_cap"])
+            r_slip = -float(np.mean(rel ** 2))
+        else:
+            r_slip = 0.0
 
         r_ten = -0.001 * np.mean(-d.actuator_force / self.fmax)
         r_smooth = -0.01 * np.mean((action - self.prev_action[i]) ** 2)
@@ -260,24 +271,35 @@ class QuadrupedCpuEnv:
         if action.shape != (self.num_envs, self.num_actions):
             raise ValueError(f"actions shape {action.shape}, expected {(self.num_envs, self.num_actions)}")
 
-        # diagonal trot: the swing diagonal pulls its back tendons, which lifts
-        # the foot and drives the body forward; the other diagonal is passive
-        # stance.  Pulling front and back together cancels propulsion because
-        # both directions shorten the leg.
+        # diagonal trot: the swing diagonal pulls its back tendons to lift and
+        # drive the foot forward; the stance diagonal can also pull its back
+        # tendons (stance_amp) to push the body forward and keep the trunk up.
+        # Pulling front and back together cancels propulsion because both
+        # directions shorten the leg.
         p = self.phase[:, None]
         if self.cfg["gait_mode"] == "diagonal":
             p_leg = np.concatenate([p, (p + 0.5) % 1.0, (p + 0.5) % 1.0, p], axis=1)
         else:
             p_leg = np.repeat(p, 4, axis=1)
-        swing = p_leg < 0.5
+        swing_frac = float(self.cfg["swing_frac"])
+        swing = p_leg < swing_frac
         back = np.where(
             swing,
-            self.cfg["gait_amp"] * np.sin(np.pi * p_leg / 0.5),
+            self.cfg["gait_amp"] * np.sin(np.pi * p_leg / max(swing_frac, 1e-6)),
             0.0,
         )
+        stance = np.zeros_like(back)
+        if self.cfg["stance_amp"] > 0.0 and swing_frac < 1.0:
+            stance = np.where(
+                ~swing,
+                self.cfg["stance_amp"]
+                * np.sin(np.pi * (p_leg - swing_frac) / max(1.0 - swing_frac, 1e-6)),
+                0.0,
+            )
+        pull = np.clip(back + stance, 0.0, 1.0)
         nom = np.zeros((self.num_envs, 4, 8), dtype=np.float64)
-        nom[:, :, 2] = back       # inner_back: swing pull
-        nom[:, :, 6] = back       # outer_back: swing pull
+        nom[:, :, 2] = pull       # inner_back
+        nom[:, :, 6] = pull       # outer_back
         nom32 = nom.reshape(self.num_envs, 32)
 
         # policy action is a residual on the nominal gait.  32 actions map
