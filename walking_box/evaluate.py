@@ -28,9 +28,14 @@ def main():
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--cmd", type=float, default=0.2)
     p.add_argument("--gait-amp", type=float, default=None)
+    p.add_argument("--gait-mode", choices=["diagonal", "bound"], default="diagonal")
+    p.add_argument("--action-dim", type=int, default=32)
+    p.add_argument("--period", type=float, default=0.8)
     p.add_argument("--steps", type=int, default=400)
-    p.add_argument("--every", type=int, default=2)
+    p.add_argument("--every", type=int, default=4)
     p.add_argument("--size", type=int, default=480)
+    p.add_argument("--no-render", action="store_true",
+                   help="only write metrics; skip the visual model/GIF")
     args = p.parse_args()
 
     out = args.out or args.ckpt.parent / "eval"
@@ -40,7 +45,10 @@ def main():
         num_envs=1,
         num_threads=1,
         episode_steps=args.steps,
-        gait_amp=0.5 if args.gait_amp is None else args.gait_amp,
+        gait_amp=0.7 if args.gait_amp is None else args.gait_amp,
+        gait_mode=args.gait_mode,
+        action_dim=args.action_dim,
+        period=args.period,
     )
     env = QuadrupedCpuEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
@@ -53,7 +61,8 @@ def main():
     env.obs[0] = env._obs_one(0)
     obs = env.get_observations()
 
-    qpos, qvel, vxs, zs = [], [], [], []
+    qpos, qvel, vxs, vys, zs, ups, yaws = [], [], [], [], [], [], []
+    failed = False
     for _ in range(args.steps):
         with torch.no_grad():
             actions = policy(obs)
@@ -61,18 +70,42 @@ def main():
         qpos.append(env.datas[0].qpos.copy())
         qvel.append(env.datas[0].qvel.copy())
         vxs.append(float(extras["log"]["/vx_mean"]))
+        vys.append(float(extras["log"]["/vy_mean"]))
         zs.append(float(extras["log"]["/height_mean"]))
+        ups.append(float(extras["log"]["/up_mean"]))
+        yaws.append(float(extras["log"]["/yaw_mean"]))
         if bool(done[0]):
+            failed = not bool(extras["time_outs"][0])
             break
+    dt = env.dt
     env.close()
 
     qpos = np.asarray(qpos)
     qvel = np.asarray(qvel)
     vx = float(np.mean(vxs)) if vxs else 0.0
+    vy = float(np.mean(vys)) if vys else 0.0
     z = float(np.mean(zs)) if zs else 0.0
+    z_min = float(np.min(zs)) if zs else 0.0
+    up_min = float(np.min(ups)) if ups else 0.0
     dx = float(qpos[-1, 0] - qpos[0, 0]) if len(qpos) else 0.0
-    print(f"* steps={len(qpos)}  mean_vx={vx:.3f} m/s  dx={dx:.3f} m  z={z:.3f} m")
-    (out / "metrics.txt").write_text(f"mean_vx {vx:.6f}\ndx {dx:.6f}\nz {z:.6f}\n")
+    dy = float(qpos[-1, 1] - qpos[0, 1]) if len(qpos) else 0.0
+    yaw = float(yaws[-1]) if yaws else 0.0
+    duration = len(qpos) * dt
+    speed = dx / duration if duration > 0 else 0.0
+    print(
+        f"* steps={len(qpos)}  mean_vx={vx:.3f} m/s  speed={speed:.3f} m/s  "
+        f"dx={dx:.3f} m  dy={dy:.3f} m  yaw={yaw:+.2f} rad  "
+        f"z={z:.3f} m  z_min={z_min:.3f} m  up_min={up_min:.3f}  failed={failed}"
+    )
+    (out / "metrics.txt").write_text(
+        f"steps {len(qpos)}\n"
+        f"mean_vx {vx:.6f}\nspeed {speed:.6f}\n"
+        f"dx {dx:.6f}\ndy {dy:.6f}\nyaw {yaw:.6f}\n"
+        f"z {z:.6f}\nz_min {z_min:.6f}\nup_min {up_min:.6f}\n"
+        f"failed {int(failed)}\n"
+    )
+    if args.no_render:
+        return
 
     # render the full visual model
     model = mujoco.MjModel.from_xml_path("urdf/gradus/walk/quadruped.xml")
@@ -96,8 +129,9 @@ def main():
         frames.append(renderer.render().copy())
     renderer.close()
     gif = out / "walk.gif"
-    imageio.mimsave(gif, frames, fps=25)
-    print(f"* wrote {gif}")
+    fps = 1.0 / (dt * args.every)
+    imageio.mimsave(gif, frames, fps=fps)
+    print(f"* wrote {gif} ({len(frames)} frames at {fps:.1f} fps)")
 
 
 if __name__ == "__main__":

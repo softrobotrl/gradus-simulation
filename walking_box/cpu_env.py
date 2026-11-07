@@ -1,7 +1,8 @@
 """CPU MuJoCo vectorised quadruped env for rsl-rl PPO.
 
-Sixteen actions: eight tendon pulls for diagonal group A (FL/BR) and eight for
-group B (FR/BL).  A simple box trunk, four foot spheres, flat floor.
+Thirty-two actions: one residual pull per tendon.  The nominal gait is a
+diagonal trot (FL+BR against FR+BL); the policy can correct every leg
+independently.  A simple box trunk, four foot spheres, flat floor.
 """
 
 from __future__ import annotations
@@ -32,14 +33,21 @@ class EnvConfig:
     cmd_min: float = 0.10
     cmd_max: float = 0.25
     vel_weight: float = 2.0
-    survival_bonus: float = 0.02
-    lift_height: float = 0.045
+    vel_sigma: float = 0.10
+    progress_weight: float = 0.7
+    survival_bonus: float = 0.0
+    lift_height: float = 0.035
     stance_height: float = 0.015
-    lift_weight: float = 0.0
-    gait_amp: float = 0.5
-    gait_mode: str = "bound"      # "bound" or "diagonal"
+    lift_weight: float = 0.3
+    slip_weight: float = 0.3
+    lat_weight: float = 1.0
+    yaw_weight: float = 1.0
+    heading_weight: float = 0.5
+    fall_penalty: float = 1.0
+    gait_amp: float = 0.7
+    gait_mode: str = "diagonal"   # "diagonal" or "bound"
     residual_scale: float = 0.5
-    action_dim: int = 16
+    action_dim: int = 32
     num_threads: int | None = None
     seed: int = 0
 
@@ -80,6 +88,7 @@ class QuadrupedCpuEnv:
         self.phase = np.zeros(cfg.num_envs, dtype=np.float64)
         self.prev_action = np.zeros((cfg.num_envs, cfg.action_dim), dtype=np.float64)
         self.prev_foot_z = np.zeros((cfg.num_envs, 4), dtype=np.float64)
+        self.prev_foot_xy = np.zeros((cfg.num_envs, 4, 2), dtype=np.float64)
         self.prev_pos = np.zeros((cfg.num_envs, 3), dtype=np.float64)
 
         obs0 = self._obs_one(0)
@@ -107,6 +116,7 @@ class QuadrupedCpuEnv:
                if randomize else 0.0)
         self.cmd[i] = [cmd, 0.0, 0.0]
         self.prev_foot_z[i] = d.site_xpos[self.tip_ids, 2]
+        self.prev_foot_xy[i] = d.site_xpos[self.tip_ids, :2]
         self.prev_pos[i] = d.qpos[:3]
 
     def _obs_one(self, i: int) -> np.ndarray:
@@ -130,40 +140,78 @@ class QuadrupedCpuEnv:
         ])
 
     # ------------------------------------------------------------------ #
+    def _leg_phase(self, p: float) -> np.ndarray:
+        """Per-leg gait phase: diagonal trot or all-leg bound."""
+        if self.cfg["gait_mode"] == "diagonal":
+            return np.array([p, (p + 0.5) % 1.0, (p + 0.5) % 1.0, p])
+        return np.full(4, p, dtype=np.float64)
+
     def _reward_one(self, i: int, action: np.ndarray):
         d = self.datas[i]
         q = d.qpos[3:7]
         R = quat_to_R(q)
         v_world = (d.qpos[:3] - self.prev_pos[i]) / self.dt
-        vx = (R.T @ v_world)[0]
+        v_body = R.T @ v_world
+        vx, vy = float(v_body[0]), float(v_body[1])
         z = d.qpos[2]
         up_z = R[2, 2]
+        yaw = math.atan2(R[1, 0], R[0, 0])
+        wz = float(d.qvel[5])
         foot_z = d.site_xpos[self.tip_ids, 2]
-        swing = self.phase[i] < 0.5
-        target_z = np.array([
-            self.cfg.get("lift_height", 0.045) if swing else self.cfg.get("stance_height", 0.015),
-            self.cfg.get("stance_height", 0.015) if swing else self.cfg.get("lift_height", 0.045),
-            self.cfg.get("stance_height", 0.015) if swing else self.cfg.get("lift_height", 0.045),
-            self.cfg.get("lift_height", 0.045) if swing else self.cfg.get("stance_height", 0.015),
-        ])
-        r_vel = math.exp(-0.5 * ((vx - self.cmd[i, 0]) / 0.15) ** 2) - 0.5 * ((vx - self.cmd[i, 0]) / 0.3) ** 2
+        p_leg = self._leg_phase(float(self.phase[i]))
+        swing = p_leg < 0.5
+        target_z = np.where(
+            swing,
+            self.cfg.get("lift_height", 0.035),
+            self.cfg.get("stance_height", 0.015),
+        )
+
+        cmd = float(self.cmd[i, 0])
+        err = vx - cmd
+        sigma = self.cfg.get("vel_sigma", 0.10)
+        r_vel = math.exp(-0.5 * (err / sigma) ** 2)
+        r_progress = (float(np.clip(vx / max(cmd, 1e-3), 0.0, 1.5))
+                      if cmd > 1e-3 else 0.0)
         r_height = math.exp(-0.5 * ((z - self.cfg["stand_height"]) / 0.04) ** 2)
         r_tilt = -0.5 * (1.0 - up_z) / 0.1
-        r_yaw = -0.0001 * (d.qvel[5] / 0.5) ** 2
+        r_lat = -0.5 * (vy / 0.10) ** 2
+        r_yaw = -0.5 * (wz / 0.5) ** 2
+        r_heading = -math.sin(yaw) ** 2
         r_lift = -0.5 * np.mean((foot_z - target_z) ** 2) / 0.02 ** 2
+
+        foot_xy = d.site_xpos[self.tip_ids, :2]
+        foot_vxy = (foot_xy - self.prev_foot_xy[i]) / self.dt
+        slip = np.linalg.norm(foot_vxy, axis=1)
+        stance = ~swing
+        r_slip = (-0.5 * float(np.mean((slip[stance] / 0.05) ** 2))
+                  if np.any(stance) else 0.0)
+
         r_ten = -0.001 * np.mean(-d.actuator_force / self.fmax)
         r_smooth = -0.01 * np.mean((action - self.prev_action[i]) ** 2)
         reward = (
-            self.cfg["vel_weight"] * r_vel + 0.5 * r_height + r_tilt + r_yaw
-            + self.cfg["lift_weight"] * r_lift + r_ten + r_smooth
+            self.cfg["vel_weight"] * r_vel
+            + self.cfg["progress_weight"] * r_progress
+            + 0.5 * r_height
+            + r_tilt
+            + self.cfg["lat_weight"] * r_lat
+            + self.cfg["yaw_weight"] * r_yaw
+            + self.cfg["heading_weight"] * r_heading
+            + self.cfg["lift_weight"] * r_lift
+            + self.cfg["slip_weight"] * r_slip
+            + r_ten
+            + r_smooth
             + self.cfg["survival_bonus"]
         )
         failed = (z < 0.35) or (z > 1.0) or (up_z < 0.5) or (not np.isfinite(d.qpos).all())
+        if failed:
+            reward -= self.cfg["fall_penalty"]
         info = {
-            "vx": vx, "z": z, "up": up_z,
-            "r_vel": r_vel, "r_height": r_height, "r_tilt": r_tilt,
-            "r_yaw": r_yaw, "r_lift": r_lift, "r_ten": r_ten,
-            "r_smooth": r_smooth,
+            "vx": vx, "vy": vy, "z": z, "up": up_z, "yaw": yaw,
+            "r_vel": r_vel, "r_progress": r_progress,
+            "r_height": r_height, "r_tilt": r_tilt,
+            "r_lat": r_lat, "r_yaw": r_yaw, "r_heading": r_heading,
+            "r_lift": r_lift, "r_slip": r_slip,
+            "r_ten": r_ten, "r_smooth": r_smooth,
         }
         return float(reward), bool(failed), info
 
@@ -181,26 +229,35 @@ class QuadrupedCpuEnv:
         if action.shape != (self.num_envs, self.num_actions):
             raise ValueError(f"actions shape {action.shape}, expected {(self.num_envs, self.num_actions)}")
 
-        # nominal diagonal trot: front pull during swing, back pull during stance
+        # diagonal trot: the swing diagonal pulls its back tendons, which lifts
+        # the foot and drives the body forward; the other diagonal is passive
+        # stance.  Pulling front and back together cancels propulsion because
+        # both directions shorten the leg.
         p = self.phase[:, None]
         if self.cfg["gait_mode"] == "diagonal":
             p_leg = np.concatenate([p, (p + 0.5) % 1.0, (p + 0.5) % 1.0, p], axis=1)
         else:
             p_leg = np.repeat(p, 4, axis=1)
-        f = np.sin(2.0 * np.pi * p_leg) * self.cfg["gait_amp"]
-        front = np.maximum(f, 0.0)
-        back = np.maximum(-f, 0.0)
+        swing = p_leg < 0.5
+        back = np.where(
+            swing,
+            self.cfg["gait_amp"] * np.sin(np.pi * p_leg / 0.5),
+            0.0,
+        )
         nom = np.zeros((self.num_envs, 4, 8), dtype=np.float64)
-        nom[:, :, 0] = front      # inner_front
-        nom[:, :, 2] = back       # inner_back
-        nom[:, :, 4] = front      # outer_front
-        nom[:, :, 6] = back       # outer_back
+        nom[:, :, 2] = back       # inner_back: swing pull
+        nom[:, :, 6] = back       # outer_back: swing pull
         nom32 = nom.reshape(self.num_envs, 32)
 
-        # policy action is a residual on the nominal trot
-        res32 = np.concatenate(
-            [action[:, 0:8], action[:, 8:16], action[:, 8:16], action[:, 0:8]], axis=1
-        )
+        # policy action is a residual on the nominal gait.  32 actions map
+        # directly to the 32 tendons; 16 actions keep the old diagonal-pair
+        # mapping for checkpoint compatibility.
+        if self.num_actions == 16:
+            res32 = np.concatenate(
+                [action[:, 0:8], action[:, 8:16], action[:, 8:16], action[:, 0:8]], axis=1
+            )
+        else:
+            res32 = action
         pull32 = np.clip(nom32 + self.cfg["residual_scale"] * res32, 0.0, 1.0)
         target = self.l0[None, :] - self.stroke[None, :] * pull32
         ctrl = np.clip(0.5 * np.array([d.ctrl for d in self.datas]) + 0.5 * target,
@@ -212,8 +269,11 @@ class QuadrupedCpuEnv:
         done = np.zeros(self.num_envs, dtype=bool)
         failed = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros_like(self.obs)
-        term_keys = ("r_vel", "r_height", "r_tilt", "r_yaw", "r_lift", "r_ten", "r_smooth")
-        log = {k: np.zeros(self.num_envs) for k in ("vx", "z", "up") + term_keys}
+        term_keys = (
+            "r_vel", "r_progress", "r_height", "r_tilt", "r_lat", "r_yaw",
+            "r_heading", "r_lift", "r_slip", "r_ten", "r_smooth",
+        )
+        log = {k: np.zeros(self.num_envs) for k in ("vx", "vy", "z", "up", "yaw") + term_keys}
 
         for i in range(self.num_envs):
             self.t[i] += 1
@@ -222,12 +282,15 @@ class QuadrupedCpuEnv:
             failed[i] = fail
             done[i] = fail or (self.t[i] >= self.max_episode_length)
             log["vx"][i] = info["vx"]
+            log["vy"][i] = info["vy"]
             log["z"][i] = info["z"]
             log["up"][i] = info["up"]
+            log["yaw"][i] = info["yaw"]
             for k in term_keys:
                 log[k][i] = info[k]
             self.prev_action[i] = action[i]
             self.prev_foot_z[i] = self.datas[i].site_xpos[self.tip_ids, 2]
+            self.prev_foot_xy[i] = self.datas[i].site_xpos[self.tip_ids, :2]
             self.prev_pos[i] = self.datas[i].qpos[:3]
             self.phase[i] = (self.phase[i] + self.dt / self.cfg["period"]) % 1.0
             self.obs[i] = self._obs_one(i)
@@ -246,8 +309,10 @@ class QuadrupedCpuEnv:
             "log": {
                 "/reward_mean": float(reward.mean()),
                 "/vx_mean": float(log["vx"].mean()),
+                "/vy_mean": float(log["vy"].mean()),
                 "/height_mean": float(log["z"].mean()),
                 "/up_mean": float(log["up"].mean()),
+                "/yaw_mean": float(log["yaw"].mean()),
                 "/failed": float(failed.mean()),
                 **{f"/{k}": float(log[k].mean()) for k in term_keys},
             },

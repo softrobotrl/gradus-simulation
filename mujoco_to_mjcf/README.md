@@ -13,6 +13,17 @@ python -m mujoco_to_mjcf.build --out urdf/gradus/tracer --tip-up   # tracer mode
 DISPLAY=:0 python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 ```
 
+The play script accepts runtime servo overrides for a larger circle / more tip
+lift. `--outer-scale 1.0` uses the full outer-tendon stroke, and `--servo-kp`
+overrides the position gain (the current walk build uses `kp=8000`):
+
+```bash
+MUJOCO_GL=egl python -m mujoco_to_mjcf.play \
+    --xml urdf/gradus/walk/scene.xml \
+    --servo-kp 8000 --servo-kv 80 --outer-scale 1.0 \
+    --record urdf/gradus/walk/leg_circle_lift.gif --seconds 6
+```
+
 `--tip-up` flips the model 180° about world X and adds a `tip` site at the
 foot centre. The resulting `urdf/gradus/tracer/` model is used by
 [`mujoco_leg/`](../mujoco_leg/README.md) for PPO shape tracing.

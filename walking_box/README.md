@@ -11,17 +11,18 @@ forward walking only, PPO, no surrogate model.
 ```
 
 - 4 legs × 8 tendon servos = 32 actuators.
-- **Nominal all-leg bound**: a phase-based pattern pulls all four legs' front
-  tendons during the recovery half-cycle and back tendons during the push
-  half-cycle. The continuum legs cannot lift their feet above straight, so a
-  bound/shuffle is more realistic than a swing-based trot.
-- **16 policy actions**: residual tendon pulls for group A (FL + BR) and group
-  B (FR + BL). `pull = nominal + 0.5 * residual`, clipped to `[0, 1]`. The
-  diagonal pairs are tied, so the policy has half the output dimension.
-- 104 observations: trunk quat, body velocity, angular velocity, height error,
+- **Diagonal trot nominal**: the FL+BR diagonal swings while FR+BL is in
+  stance, then the pairs swap. During swing, the back tendons pull the foot
+  rearward and lift it; the stance diagonal stays passive. Pulling front and
+  back together cancels propulsion because both directions shorten the leg.
+- **32 policy actions**: one residual tendon pull per actuator. The policy can
+  correct every leg independently around the nominal trot.
+- 120 observations: trunk quat, body velocity, angular velocity, height error,
   command, gait phase, 32 tendon lengths, 32 tendon forces, 4 foot heights,
-  4 foot vertical velocities, previous action.
+  4 foot vertical velocities, previous 32 actions.
 - CPU MuJoCo + `rsl-rl` PPO; no MJX/Warp required.
+- Servos are stronger than the original single-leg model: `kp=8000`,
+  `kv=80`, still limited to 2 N·m / 200 N and 31.4 mm stroke.
 
 ## Build
 
@@ -47,9 +48,9 @@ python -m walking_box.train_rsl \
 
 Curriculum:
 
-1. 200 iterations with the nominal gait off, `cmd_max=0` (stand)
-2. 300 at `cmd=0.05..0.15` m/s with the nominal bound on
-3. 1000 at `cmd=0.10..0.25` m/s
+1. 50 iterations with the nominal gait off, `cmd_max=0` (stand)
+2. 300 at `cmd=0.05..0.15` m/s with the diagonal trot on
+3. 1150 at `cmd=0.10..0.25` m/s
 
 Commands are kept strictly positive during walking so the policy cannot settle
 into a stable standing local optimum.
@@ -63,26 +64,68 @@ To fine-tune a checkpoint without replaying the stand/walk curriculum:
 
 ```bash
 python -m walking_box.train_rsl \
-    --resume logs/walking_box/walk5_reward/model_800.pt \
-    --iterations 500 --num-envs 64 --steps-per-env 24 \
-    --num-threads 8 --episode-steps 400
+    --resume logs/walking_box/walk_diag_strong/model_1497.pt \
+    --iterations 800 --num-envs 64 --steps-per-env 24 \
+    --num-threads 8 --episode-steps 400 --run-name walk_diag_yaw
 ```
 
 ## Evaluate / render
 
 ```bash
 python -m walking_box.evaluate \
-    --ckpt logs/walking_box/walk5_reward/model_800.pt \
-    --cmd 0.25 --gait-amp 0.55 --steps 400
+    --ckpt logs/walking_box/walk_diag_yaw/model_1600.pt \
+    --cmd 0.25 --gait-amp 0.7 --period 0.8 --steps 400
 ```
 
-Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps). The camera
-follows the trunk so the gait stays framed.
+Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps at
+`--every 4`). The camera follows the trunk so the gait stays framed. Add
+`--no-render` to write metrics only.
 
-### Result (walk5_reward, 900 iterations)
+### Result (walk_diag_strong, 1500 iterations)
 
-Best checkpoint: `logs/walking_box/walk5_reward/model_800.pt`, evaluated at
-`cmd=0.25 m/s` for 400 steps (4 s):
+Best stable checkpoint: `model_1497.pt`, evaluated at `cmd=0.25 m/s`,
+`gait_amp=0.7`, `period=0.8`, 400 steps (4 s):
+
+| metric | result |
+|---|---|
+| mean forward speed | 0.095 m/s |
+| distance | 0.380 m |
+| lateral drift | 0.210 m |
+| yaw | −0.15 rad |
+| trunk height | 0.628 m |
+| fall | no |
+
+Earlier checkpoints reached 0.18–0.26 m/s but yawed and fell after 3–3.5 s
+(`model_700`, `model_1000`, `model_1150`, `model_1300`, `model_1450`):
+
+| checkpoint | mean vx | distance | lateral drift | yaw | fall |
+|---|---|---|---|---|---|
+| 550 | 0.084 | 0.356 m | 0.097 m | −0.05 | no |
+| 700 | 0.239 | 0.615 m | 0.395 m | −0.40 | 2.4 s |
+| 1000 | 0.183 | 0.608 m | 0.387 m | −0.36 | 3.2 s |
+| 1150 | 0.184 | 0.660 m | 0.331 m | −0.59 | 3.6 s |
+| 1300 | 0.214 | 0.684 m | 0.342 m | −0.56 | 3.3 s |
+| 1450 | 0.183 | 0.653 m | 0.336 m | −0.69 | 3.4 s |
+| **1497** | **0.090** | **0.380 m** | **0.210 m** | **−0.15** | **no** |
+
+A yaw/lateral fine-tune (`walk_diag_yaw`) from `model_1497` was run for 800
+iterations with `lat_weight=2.0`, `yaw_weight=1.5`, and `heading_weight=1.0`.
+The furthest stable checkpoint is `model_1600.pt`:
+
+| metric | result |
+|---|---|
+| mean forward speed | 0.102 m/s |
+| distance | 0.406 m |
+| lateral drift | 0.237 m |
+| yaw | −0.17 rad |
+| trunk height | 0.627 m |
+| fall | no |
+
+Checkpoints `1650` and `1700` reach 0.19–0.20 m/s but yaw and fall after
+3.7–3.9 s. The final fine-tune checkpoint (`2296`) is stable but back to
+0.089 m/s. The fast limit cycle is not yet robustly stable.
+
+The previous bound baseline (`walk5_reward`, 16 actions) is kept for reference:
 
 | nominal bound | result |
 |---|---|
@@ -99,13 +142,22 @@ is kept.
 ## Reward
 
 ```
-2.0 × track forward body velocity
+2.0 × forward velocity tracking (sigma 0.10 m/s)
++ 0.7 × forward progress relative to command
 + 0.5 × hold trunk height and stay upright
-− tendon tension, action rate, yaw rate
-+ 0.02 survival bonus
+− lateral-velocity penalty
+− yaw-rate and heading penalties
++ 0.3 × swing-foot clearance
+− stance-foot slip penalty
+− tendon tension and action rate
+− 1.0 on a fall
 ```
 
-Falls (`z < 0.35`, body up-vector `< 0.5`) terminate the episode.
+The swing target is `0.035 m` and the stance target is `0.015 m`. The
+yaw/lateral fine-tune raises `lat_weight` to 2.0, `yaw_weight` to 1.5, and
+`heading_weight` to 1.0. There is no survival bonus, so standing still is not
+rewarded once a command is present. Falls (`z < 0.35`, body up-vector `< 0.5`)
+terminate the episode.
 
 ## Notes
 
@@ -115,6 +167,7 @@ Falls (`z < 0.35`, body up-vector `< 0.5`) terminate the episode.
   (~0.61 m): the static tip-over margin was only ~12°. The wider/longer box
   moves the support polygon out to the hips and raises that margin to ~22°.
 - Feet are 15 mm spheres at the `tip` sites; leg mesh collisions are disabled.
-- The servo limits are the single-leg values: 31.4 mm stroke, 200 N.
+- The servo limits are the single-leg values: 31.4 mm stroke, 200 N, with
+  `kp=8000`, `kv=80` for the retrained diagonal-trot model.
 - `rsl-rl` handles timeout bootstrapping via
   `genesis_leg.runner:LegPPO`.

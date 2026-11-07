@@ -83,6 +83,7 @@ def main() -> None:
         num_envs=args.num_envs,
         num_threads=args.num_threads,
         episode_steps=args.episode_steps,
+        gait_mode="diagonal",
     )
     torch.manual_seed(cfg.seed)
     torch.cuda.manual_seed_all(cfg.seed)
@@ -106,34 +107,43 @@ def main() -> None:
         if args.resume:
             # Fine-tune directly in the full walking regime; re-running the
             # stand phase would pull the policy back to standing.
+            env.cfg["gait_mode"] = "diagonal"
             env.cfg["cmd_min"] = 0.10
             env.cfg["cmd_max"] = 0.25
             env.cfg["vel_weight"] = 2.0
-            env.cfg["survival_bonus"] = 0.02
-            env.cfg["lift_weight"] = 0.0
-            env.cfg["gait_amp"] = 0.5
-            print("* fine-tune: cmd=0.10..0.25, nominal bound on")
+            env.cfg["progress_weight"] = 0.7
+            env.cfg["survival_bonus"] = 0.0
+            env.cfg["lift_weight"] = 0.3
+            env.cfg["gait_amp"] = 0.7
+            env.cfg["period"] = 0.8
+            env.cfg["lift_height"] = 0.035
+            env.cfg["slip_weight"] = 0.3
+            env.cfg["lat_weight"] = 2.0
+            env.cfg["yaw_weight"] = 1.5
+            env.cfg["heading_weight"] = 1.0
+            print("* fine-tune: diagonal trot, cmd=0.10..0.25, stronger yaw/lateral")
             runner.learn(args.iterations)
             return
 
-        # curriculum: stand -> slow walk -> full command range.
-        # Keep the stand phase short so the policy does not settle into a
-        # stable standing local optimum, and require a non-zero command once
-        # walking starts.
+        # Curriculum: brief stand, then slow diagonal trot, then full range.
+        # The stand phase is deliberately short so the policy does not settle
+        # into a stable standing local optimum.
+        env.cfg["gait_mode"] = "diagonal"
         env.cfg["cmd_min"] = 0.0
         env.cfg["cmd_max"] = 0.0
         env.cfg["lift_weight"] = 0.0
         env.cfg["gait_amp"] = 0.0
-        first = min(200, args.iterations)
+        first = min(50, args.iterations)
         runner.learn(first, init_at_random_ep_len=True)
         if args.iterations > first:
             env.cfg["cmd_min"] = 0.05
             env.cfg["cmd_max"] = 0.15
             env.cfg["vel_weight"] = 1.5
-            env.cfg["survival_bonus"] = 0.05
-            env.cfg["lift_weight"] = 0.0
-            env.cfg["gait_amp"] = 0.5
-            print("* curriculum: cmd=0.05..0.15, nominal bound on")
+            env.cfg["progress_weight"] = 0.5
+            env.cfg["survival_bonus"] = 0.0
+            env.cfg["lift_weight"] = 0.3
+            env.cfg["gait_amp"] = 0.6
+            print("* curriculum: diagonal trot, cmd=0.05..0.15")
             second = min(300, args.iterations - first)
             runner.learn(second)
             remaining = args.iterations - first - second
@@ -141,8 +151,10 @@ def main() -> None:
                 env.cfg["cmd_min"] = 0.10
                 env.cfg["cmd_max"] = 0.25
                 env.cfg["vel_weight"] = 2.0
-                env.cfg["survival_bonus"] = 0.02
-                print("* curriculum: cmd=0.10..0.25")
+                env.cfg["progress_weight"] = 0.7
+                env.cfg["lift_weight"] = 0.3
+                env.cfg["gait_amp"] = 0.7
+                print("* curriculum: diagonal trot, cmd=0.10..0.25")
                 runner.learn(remaining)
     finally:
         env.close()
