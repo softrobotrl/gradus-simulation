@@ -69,34 +69,88 @@ python -m walking_box.train_rsl \
     --num-threads 8 --episode-steps 400 --run-name walk_diag_yaw
 ```
 
+For robust fine-tuning, add `--reset-noise 1.0` to perturb each reset by
+±20 mm in xy, ±0.12 rad yaw, ±0.03 rad roll/pitch, and ±0.02 m/s base
+velocity. `--gait-amp` and `--period` override the nominal gait used during
+the fine-tune.
+
 ## Evaluate / render
 
 ```bash
 python -m walking_box.evaluate \
-    --ckpt logs/walking_box/walk_diag_yaw/model_1600.pt \
-    --cmd 0.25 --gait-amp 0.7 --period 0.8 --steps 400
+    --ckpt logs/walking_box/walk_diag_robust/model_2100.pt \
+    --cmd 0.18 --gait-amp 0.8 --period 0.86 --steps 400
 ```
 
 Writes `eval/metrics.txt` and `eval/walk.gif` (3/4 view, 25 fps at
 `--every 4`). The camera follows the trunk so the gait stays framed. Add
 `--no-render` to write metrics only.
 
-### Result (walk_diag_strong, 1500 iterations)
+To check sensitivity to the initial pose, run the same policy from perturbed
+resets:
 
-Best stable checkpoint: `model_1497.pt`, evaluated at `cmd=0.25 m/s`,
-`gait_amp=0.7`, `period=0.8`, 400 steps (4 s):
+```bash
+python -m walking_box.robustness \
+    --ckpt logs/walking_box/walk_diag_robust/model_2100.pt \
+    --cmd 0.18 --gait-amp 0.8 --period 0.86 --seeds 20
+```
+
+The default perturbation is ±20 mm in xy, ±0.12 rad yaw, ±0.03 rad
+roll/pitch, and ±0.02 m/s base velocity.
+
+### Result (walk_diag_robust, 800 iterations)
+
+The robust fine-tune resumed from `walk_diag_yaw/model_1600.pt` with
+reset-state randomization and a cleaner/slower nominal gait:
+
+```bash
+python -m walking_box.train_rsl \
+    --resume logs/walking_box/walk_diag_yaw/model_1600.pt \
+    --num-envs 64 --iterations 800 --steps-per-env 24 \
+    --num-threads 8 --episode-steps 400 --run-name walk_diag_robust \
+    --entropy-coef 0 --learning-rate 1e-4 --std 0.2 \
+    --fall-penalty 5 --tilt-weight 3 --reset-noise 1.0 \
+    --gait-amp 0.8 --period 0.86
+```
+
+Best robust checkpoint: `model_2100.pt`, evaluated at `cmd=0.18 m/s`,
+`gait_amp=0.8`, `period=0.86`, 400 steps (4 s):
 
 | metric | result |
 |---|---|
-| mean forward speed | 0.095 m/s |
-| distance | 0.380 m |
-| lateral drift | 0.210 m |
-| yaw | −0.15 rad |
-| trunk height | 0.628 m |
+| mean forward speed | 0.069 m/s |
+| distance | 0.275 m |
+| lateral drift | −0.006 m |
+| yaw | −0.01 rad |
+| trunk height | 0.639 m |
+| minimum trunk height | 0.618 m |
+| minimum up-vector | 0.995 |
 | fall | no |
 
-Earlier checkpoints reached 0.18–0.26 m/s but yawed and fell after 3–3.5 s
-(`model_700`, `model_1000`, `model_1150`, `model_1300`, `model_1450`):
+Across 20 perturbed initial states, all 20 survive the full 4 s; mean forward
+distance is 0.299 m. The walk is slow but stays upright and nearly straight.
+
+Speed/robustness trade-off on the same checkpoint and gait:
+
+| command | nominal speed | distance | 20-seed survival |
+|---|---|---|---|
+| **0.18** | **0.069 m/s** | **0.275 m** | **20/20** |
+| 0.20 | 0.078 m/s | 0.311 m | 19/20 |
+| 0.25 | 0.077 m/s | 0.310 m | 18/20 |
+
+The pre-robustness checkpoint (`walk_diag_yaw/model_1600.pt`) is faster but
+much more sensitive: at `cmd=0.25`, `gait_amp=0.8`, `period=0.86` it walks
+0.103 m/s but survives only 8/20 perturbed starts. That version is kept for
+comparison, but `walk_diag_robust/model_2100.pt` is the recommended reliable
+walk.
+
+### Earlier results
+
+The first diagonal run (`walk_diag_strong`, 1500 iterations) produced
+`model_1497.pt`, stable at 0.095 m/s over 4 s. The yaw/lateral fine-tune
+(`walk_diag_yaw`, 800 iterations) produced `model_1600.pt`, stable at
+0.102 m/s. Faster checkpoints reached 0.18–0.26 m/s but yawed and fell after
+3–3.5 s:
 
 | checkpoint | mean vx | distance | lateral drift | yaw | fall |
 |---|---|---|---|---|---|
@@ -108,22 +162,8 @@ Earlier checkpoints reached 0.18–0.26 m/s but yawed and fell after 3–3.5 s
 | 1450 | 0.183 | 0.653 m | 0.336 m | −0.69 | 3.4 s |
 | **1497** | **0.090** | **0.380 m** | **0.210 m** | **−0.15** | **no** |
 
-A yaw/lateral fine-tune (`walk_diag_yaw`) from `model_1497` was run for 800
-iterations with `lat_weight=2.0`, `yaw_weight=1.5`, and `heading_weight=1.0`.
-The furthest stable checkpoint is `model_1600.pt`:
-
-| metric | result |
-|---|---|
-| mean forward speed | 0.102 m/s |
-| distance | 0.406 m |
-| lateral drift | 0.237 m |
-| yaw | −0.17 rad |
-| trunk height | 0.627 m |
-| fall | no |
-
-Checkpoints `1650` and `1700` reach 0.19–0.20 m/s but yaw and fall after
-3.7–3.9 s. The final fine-tune checkpoint (`2296`) is stable but back to
-0.089 m/s. The fast limit cycle is not yet robustly stable.
+The faster limit cycles still yaw and fall; the robust policy trades speed
+for a wider stability basin.
 
 The previous bound baseline (`walk5_reward`, 16 actions) is kept for reference:
 
@@ -155,9 +195,10 @@ is kept.
 
 The swing target is `0.035 m` and the stance target is `0.015 m`. The
 yaw/lateral fine-tune raises `lat_weight` to 2.0, `yaw_weight` to 1.5, and
-`heading_weight` to 1.0. There is no survival bonus, so standing still is not
-rewarded once a command is present. Falls (`z < 0.35`, body up-vector `< 0.5`)
-terminate the episode.
+`heading_weight` to 1.0. The robust fine-tune additionally uses
+`reset_noise=1.0`, `fall_penalty=5`, and `tilt_weight=3`. There is no survival
+bonus, so standing still is not rewarded once a command is present. Falls
+(`z < 0.35`, body up-vector `< 0.5`) terminate the episode.
 
 ## Notes
 

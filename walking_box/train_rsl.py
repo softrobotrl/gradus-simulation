@@ -82,6 +82,12 @@ def main() -> None:
                    help="override the reward fall penalty")
     p.add_argument("--tilt-weight", type=float, default=None,
                    help="override the reward tilt weight")
+    p.add_argument("--reset-noise", type=float, default=None,
+                   help="scale initial-state perturbations (0 disables)")
+    p.add_argument("--gait-amp", type=float, default=None,
+                   help="override the nominal gait amplitude")
+    p.add_argument("--period", type=float, default=None,
+                   help="override the nominal gait period")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -99,6 +105,8 @@ def main() -> None:
     torch.cuda.manual_seed_all(cfg.seed)
     np.random.seed(cfg.seed)
     env = QuadrupedCpuEnv(cfg)
+    if args.reset_noise is not None:
+        env.cfg["reset_noise"] = args.reset_noise
     train_cfg = training_config(name, args.steps_per_env)
     settings = {
         "environment": asdict(cfg),
@@ -151,7 +159,15 @@ def main() -> None:
                 env.cfg["fall_penalty"] = args.fall_penalty
             if args.tilt_weight is not None:
                 env.cfg["tilt_weight"] = args.tilt_weight
-            print("* fine-tune: diagonal trot, cmd=0.10..0.25, stronger yaw/lateral")
+            if args.reset_noise is not None:
+                env.cfg["reset_noise"] = args.reset_noise
+            if args.gait_amp is not None:
+                env.cfg["gait_amp"] = args.gait_amp
+            if args.period is not None:
+                env.cfg["period"] = args.period
+            print(f"* fine-tune: diagonal trot, cmd=0.10..0.25, "
+                  f"amp={env.cfg['gait_amp']:.2f}, period={env.cfg['period']:.2f}, "
+                  f"reset_noise={env.cfg['reset_noise']:.2f}, stronger yaw/lateral")
             runner.learn(args.iterations)
             return
 

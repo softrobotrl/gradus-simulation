@@ -49,8 +49,20 @@ class EnvConfig:
     gait_mode: str = "diagonal"   # "diagonal" or "bound"
     residual_scale: float = 0.5
     action_dim: int = 32
+    reset_noise: float = 0.0      # scales initial-state perturbation
     num_threads: int | None = None
     seed: int = 0
+
+
+def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    return np.array([
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ])
 
 
 def quat_to_R(q: np.ndarray) -> np.ndarray:
@@ -110,6 +122,24 @@ class QuadrupedCpuEnv:
         d.qvel[:] = 0.0
         d.ctrl[:] = self.l0
         mujoco.mj_forward(self.m, d)
+        noise = self.cfg["reset_noise"]
+        if noise > 0.0:
+            d.qpos[0] += self.rng.uniform(-0.02 * noise, 0.02 * noise)
+            d.qpos[1] += self.rng.uniform(-0.02 * noise, 0.02 * noise)
+            yaw = self.rng.uniform(-0.12 * noise, 0.12 * noise)
+            roll = self.rng.uniform(-0.03 * noise, 0.03 * noise)
+            pitch = self.rng.uniform(-0.03 * noise, 0.03 * noise)
+            q = quat_mul(
+                quat_mul(
+                    np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]),
+                    np.array([math.cos(roll / 2), math.sin(roll / 2), 0.0, 0.0]),
+                ),
+                np.array([math.cos(pitch / 2), 0.0, math.sin(pitch / 2), 0.0]),
+            )
+            d.qpos[3:7] = quat_mul(d.qpos[3:7], q)
+            d.qpos[3:7] /= np.linalg.norm(d.qpos[3:7])
+            d.qvel[:6] = self.rng.uniform(-0.02 * noise, 0.02 * noise, size=6)
+            mujoco.mj_forward(self.m, d)
         self.t[i] = 0
         self.phase[i] = 0.0
         self.prev_action[i] = 0.0
