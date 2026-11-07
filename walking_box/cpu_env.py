@@ -43,6 +43,7 @@ class EnvConfig:
     lat_weight: float = 1.0
     yaw_weight: float = 1.0
     heading_weight: float = 0.5
+    tilt_weight: float = 1.0
     fall_penalty: float = 1.0
     gait_amp: float = 0.7
     gait_mode: str = "diagonal"   # "diagonal" or "bound"
@@ -192,7 +193,7 @@ class QuadrupedCpuEnv:
             self.cfg["vel_weight"] * r_vel
             + self.cfg["progress_weight"] * r_progress
             + 0.5 * r_height
-            + r_tilt
+            + self.cfg["tilt_weight"] * r_tilt
             + self.cfg["lat_weight"] * r_lat
             + self.cfg["yaw_weight"] * r_yaw
             + self.cfg["heading_weight"] * r_heading

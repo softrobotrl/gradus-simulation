@@ -72,6 +72,16 @@ def main() -> None:
     p.add_argument("--run-name", type=str, default="")
     p.add_argument("--resume", type=Path, default=None,
                    help="continue from a checkpoint; --iterations is additional")
+    p.add_argument("--entropy-coef", type=float, default=None,
+                   help="override PPO entropy coefficient after loading")
+    p.add_argument("--learning-rate", type=float, default=None,
+                   help="override PPO learning rate after loading")
+    p.add_argument("--std", type=float, default=None,
+                   help="freeze the policy action std at this value")
+    p.add_argument("--fall-penalty", type=float, default=None,
+                   help="override the reward fall penalty")
+    p.add_argument("--tilt-weight", type=float, default=None,
+                   help="override the reward tilt weight")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -103,6 +113,22 @@ def main() -> None:
     if args.resume:
         runner.load(str(args.resume), map_location=args.device)
         print(f"* resumed {args.resume} at iteration {runner.current_learning_iteration}")
+    if args.entropy_coef is not None:
+        runner.alg.entropy_coef = args.entropy_coef
+    if args.learning_rate is not None:
+        runner.alg.learning_rate = args.learning_rate
+        for group in runner.alg.optimizer.param_groups:
+            group["lr"] = args.learning_rate
+    if args.std is not None:
+        dist = runner.alg.actor.distribution
+        std_param = getattr(dist, "std_param", None)
+        if std_param is not None:
+            std_param.data.fill_(args.std)
+            std_param.requires_grad_(False)
+        else:
+            dist.std.data.fill_(args.std)
+            dist.std.requires_grad_(False)
+        print(f"* fixed action std at {args.std}")
     try:
         if args.resume:
             # Fine-tune directly in the full walking regime; re-running the
@@ -121,6 +147,10 @@ def main() -> None:
             env.cfg["lat_weight"] = 2.0
             env.cfg["yaw_weight"] = 1.5
             env.cfg["heading_weight"] = 1.0
+            if args.fall_penalty is not None:
+                env.cfg["fall_penalty"] = args.fall_penalty
+            if args.tilt_weight is not None:
+                env.cfg["tilt_weight"] = args.tilt_weight
             print("* fine-tune: diagonal trot, cmd=0.10..0.25, stronger yaw/lateral")
             runner.learn(args.iterations)
             return
