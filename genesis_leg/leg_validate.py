@@ -23,7 +23,6 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-import torch
 
 from genesis_leg.leg_play import circle_pull, default_xml
 
@@ -142,6 +141,8 @@ def check_droop(xml, steps, substeps, results):
 
 
 def run_genesis(xml, cases, settle_steps, drive_steps, substeps):
+    import torch
+
     from genesis_leg.leg import GenesisLeg
 
     # Every pull case runs at once, plus one last env for the circle drive.

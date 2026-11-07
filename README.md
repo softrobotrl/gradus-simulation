@@ -36,6 +36,15 @@ and servos, and checks it against MuJoCo. No RL task yet.
 - Entry: `python -m genesis_leg.leg_validate --xml urdf/gradus/sim/leg.xml`
 - Docs: [genesis_leg/README.md](genesis_leg/README.md#the-onshape-leg-in-genesis)
 
+### The leg in SOFA (`sofa_leg/`)
+
+The same `leg.xml` leg with the backbone as a continuous FEM fibreglass rod (SOFA + SoftRobots) instead of
+spring joints: the high-fidelity simulator, compared against MuJoCo, and a collector for surrogate training data.
+Needs SOFA v26.06 and the Python 3.12 `sofa` env (`environment-sofa.yml`).
+
+- Entry: `python -m sofa_leg.play`, `python -m sofa_leg.validate`, `python -m sofa_leg.collect`
+- Docs: [sofa_leg/README.md](sofa_leg/README.md)
+
 ## Repository structure
 
 * `onshape_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.

@@ -12,8 +12,6 @@ import math
 import time
 from pathlib import Path
 
-import torch
-
 OUTER_SCALE, OUTER_PHASE = 0.45, 0.6
 
 
@@ -45,6 +43,8 @@ def main():
     parser.add_argument("--substeps", type=int, help="physics steps per model timestep (default: DEFAULT_SUBSTEPS)")
     parser.add_argument("--no-viewer", action="store_true")
     args = parser.parse_args()
+
+    import torch  # only the Genesis player needs it; circle_pull stays importable without torch
 
     from genesis_leg.leg import DEFAULT_SUBSTEPS, GenesisLeg, init_genesis
 

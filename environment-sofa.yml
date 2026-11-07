@@ -1,0 +1,19 @@
+# Python side of the SOFA leg (sofa_leg/). SOFA itself is a separate install; see sofa_leg/README.md.
+#   1. Install SOFA v26.06.00 for Windows (includes SofaPython3, SoftRobots, STLIB), e.g. to C:\Users\<you>\SOFA\v26.06.00
+#   2. conda env create -f environment-sofa.yml
+#   3. conda activate sofa
+#      $S = "C:\Users\<you>\SOFA\v26.06.00"
+#      conda env config vars set SOFA_ROOT=$S PYTHONPATH="$S\plugins\SofaPython3\lib\python3\site-packages;$S\plugins\SoftRobots\lib\python3\site-packages;$S\plugins\STLIB\lib\python3\site-packages"
+#      conda deactivate; conda activate sofa
+#   4. python -c "import Sofa, SofaRuntime, softrobots; print('ok')"
+# SOFA v26.06's Python bindings are built for Python 3.12 only, so this env is separate from gradus-rl (3.11).
+name: sofa
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - pip
+  - pip:
+    - mujoco==3.14.0   # reads leg.xml (geometry, masses, tendon routes, servos) and runs the MuJoCo reference
