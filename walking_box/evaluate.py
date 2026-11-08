@@ -18,7 +18,7 @@ import torch
 
 from rsl_rl.runners import OnPolicyRunner
 
-from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv
+from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv, spec_for_checkpoint
 from walking_box.train_rsl import training_config
 
 
@@ -29,7 +29,6 @@ def main():
     p.add_argument("--cmd", type=float, default=0.2)
     p.add_argument("--gait-amp", type=float, default=None)
     p.add_argument("--gait-mode", choices=["diagonal", "bound"], default="diagonal")
-    p.add_argument("--action-dim", type=int, default=32)
     p.add_argument("--period", type=float, default=0.8)
     p.add_argument("--swing-frac", type=float, default=0.5)
     p.add_argument("--stance-amp", type=float, default=0.0)
@@ -44,17 +43,19 @@ def main():
     out = args.out or args.ckpt.parent / "eval"
     out.mkdir(parents=True, exist_ok=True)
 
+    obs_mode, action_dim = spec_for_checkpoint(args.ckpt)
     cfg = EnvConfig(
         num_envs=1,
         num_threads=1,
         episode_steps=args.steps,
         gait_amp=0.7 if args.gait_amp is None else args.gait_amp,
         gait_mode=args.gait_mode,
-        action_dim=args.action_dim,
+        action_dim=action_dim,
         period=args.period,
         swing_frac=args.swing_frac,
         stance_amp=args.stance_amp,
         residual_scale=args.residual_scale,
+        obs_mode=obs_mode,
     )
     env = QuadrupedCpuEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")

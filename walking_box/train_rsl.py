@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
-from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv
+from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv, spec_for_checkpoint
 
 
 def training_config(name: str, steps: int) -> dict:
@@ -114,6 +114,12 @@ def main() -> None:
                    help="override the heading penalty weight")
     p.add_argument("--slip-weight", type=float, default=None,
                    help="override the stance-slip penalty weight")
+    p.add_argument("--obs-mode", choices=["hardware", "full"], default=None,
+                   help="observation set: 'hardware' (sensors only, default for new runs) or "
+                        "'full' (legacy); --resume defaults to the checkpoint's mode")
+    p.add_argument("--action-dim", type=int, choices=[16, 32], default=None,
+                   help="16 ties the diagonal legs (FL=BR, FR=BL; default for new runs), "
+                        "32 controls every leg; --resume defaults to the checkpoint's value")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -121,11 +127,16 @@ def main() -> None:
     run_dir = Path("logs/walking_box") / name
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    ckpt_obs, ckpt_act = spec_for_checkpoint(args.resume) if args.resume else ("hardware", 16)
+    obs_mode = args.obs_mode or ckpt_obs
+    action_dim = args.action_dim or ckpt_act
     cfg = EnvConfig(
         num_envs=args.num_envs,
         num_threads=args.num_threads,
         episode_steps=args.episode_steps,
         gait_mode="diagonal",
+        obs_mode=obs_mode,
+        action_dim=action_dim,
     )
     torch.manual_seed(cfg.seed)
     torch.cuda.manual_seed_all(cfg.seed)
@@ -140,7 +151,8 @@ def main() -> None:
         "device": args.device,
     }
     (run_dir / "config.json").write_text(json.dumps(settings, indent=2))
-    print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} "
+    print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} ({obs_mode}) "
+          f"actions={env.num_actions} "
           f"threads={env.num_threads} device={args.device}")
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)

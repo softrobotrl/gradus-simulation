@@ -5,14 +5,18 @@
 name: gradus-rl
 channels:
   - conda-forge
+  - nodefaults  # skip repo.anaconda.com (new Miniconda requires a ToS acceptance for it)
 dependencies:
   - python=3.11
   - numpy
   - pip
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu126
-    - "torch>=2.8.0"
-    - tensordict
+    - "torch==2.14.1+cu126"  # +cu126 forces the CUDA wheel; unpinned, pip picks the newer CPU build from PyPI
+    - tensordict==0.10.0
+    - rsl-rl-lib==5.5.1  # walking_box / genesis_leg PPO
+    - imageio  # walking_box.evaluate GIFs
+    - onshape-to-robot  # mujoco_to_mjcf.build
     - tensorboard
     - matplotlib
     - pyyaml

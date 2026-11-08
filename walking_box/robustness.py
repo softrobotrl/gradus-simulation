@@ -17,7 +17,7 @@ import torch
 
 from rsl_rl.runners import OnPolicyRunner
 
-from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv
+from walking_box.cpu_env import EnvConfig, QuadrupedCpuEnv, spec_for_checkpoint
 from walking_box.train_rsl import training_config
 
 
@@ -37,18 +37,20 @@ def main() -> None:
                    help="scale the env reset perturbation")
     args = p.parse_args()
 
+    obs_mode, action_dim = spec_for_checkpoint(args.ckpt)
     cfg = EnvConfig(
         num_envs=1,
         num_threads=1,
         episode_steps=args.steps,
         gait_amp=args.gait_amp,
         gait_mode="diagonal",
-        action_dim=32,
+        action_dim=action_dim,
         period=args.period,
         swing_frac=args.swing_frac,
         stance_amp=args.stance_amp,
         residual_scale=args.residual_scale,
         reset_noise=args.noise,
+        obs_mode=obs_mode,
     )
     env = QuadrupedCpuEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")

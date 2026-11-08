@@ -1,8 +1,14 @@
 """CPU MuJoCo vectorised quadruped env for rsl-rl PPO.
 
-Thirty-two actions: one residual pull per tendon.  The nominal gait is a
-diagonal trot (FL+BR against FR+BL); the policy can correct every leg
-independently.  A simple box trunk, four foot spheres, flat floor.
+The nominal gait is a diagonal trot (FL+BR against FR+BL).  By default the
+policy outputs 16 residual tendon pulls with the diagonal legs tied: one set of
+8 for FL+BR, one for FR+BL (``action_dim=32`` gives every leg its own 8).
+A simple box trunk, four foot spheres, flat floor.
+
+Observations default to ``obs_mode="hardware"``: only signals the real robot
+can measure (accelerometer gravity, gyro, servo positions/loads, command,
+gait phase, previous action).  ``obs_mode="full"`` keeps the legacy 120-d
+vector with simulator-only height, body velocity and foot state.
 """
 
 from __future__ import annotations
@@ -53,10 +59,30 @@ class EnvConfig:
     swing_frac: float = 0.5       # fraction of the cycle each leg is swinging
     stance_amp: float = 0.0       # back-tendon pull during stance
     residual_scale: float = 0.5
-    action_dim: int = 32
+    action_dim: int = 16          # 16: diagonal legs tied (FL=BR, FR=BL); 32: every leg independent
     reset_noise: float = 0.0      # scales initial-state perturbation
+    obs_mode: str = "hardware"    # "hardware" (107-d, sensors only) or "full" (legacy 120-d)
     num_threads: int | None = None
     seed: int = 0
+
+
+# Observation width = fixed part + previous action (one value per policy action).
+#   hardware: gravity 3 + gyro 3 + cmd 3 + phase 2 + motor pos 32 + motor load 32 = 75
+#   full:     quat 4 + height 1 + vel 3 + gyro 3 + cmd 3 + phase 2 + ten 32 + force 32
+#             + foot z 4 + foot vz 4 = 88
+OBS_BASE = {"hardware": 75, "full": 88}
+
+
+def spec_for_checkpoint(path) -> tuple[str, int]:
+    """Return (obs_mode, action_dim) a checkpoint was trained with, from its layer shapes."""
+    ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
+    actor = ckpt["actor_state_dict"]
+    width = int(actor["mlp.0.weight"].shape[1])
+    action_dim = int(actor["distribution.std_param"].shape[0])
+    for mode, base in OBS_BASE.items():
+        if base + action_dim == width:
+            return mode, action_dim
+    raise ValueError(f"{path}: input width {width} with {action_dim} actions matches no obs_mode")
 
 
 def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -156,6 +182,58 @@ class QuadrupedCpuEnv:
         self.prev_pos[i] = d.qpos[:3]
 
     def _obs_one(self, i: int) -> np.ndarray:
+        if self.cfg["obs_mode"] == "full":
+            return self._obs_full(i)
+        return self._obs_hardware(i)
+
+    def _obs_hardware(self, i: int) -> np.ndarray:
+        """Only what the real robot can sense (75 + action_dim values; 91 with tied legs).
+
+        gravity (3, accelerometer) | gyro (3) | command (3) | gait phase (2) |
+        motor positions (32, servo encoders) | motor loads (32, servo current) |
+        previous action (16 tied / 32).  No height, body velocity or foot state.
+        """
+        d = self.datas[i]
+        R = quat_to_R(d.qpos[3:7])
+
+        # Gravity direction in the trunk frame (tilt).  Measurable: a trunk
+        # accelerometer reads mostly gravity when the body is not accelerating
+        # hard; fused with the gyro (complementary/Madgwick filter) it gives a
+        # stable "down" vector.  Absolute yaw is not included: it would need a
+        # magnetometer.
+        gravity = R.T @ np.array([0.0, 0.0, -1.0])
+
+        # Angular velocity in the trunk frame.  Measurable: this is exactly
+        # what a gyroscope outputs (free-joint qvel[3:6] is body-frame).
+        gyro = d.qvel[3:6]
+
+        # Speed command.  Measurable: set by the operator/controller, not sensed.
+        cmd = self.cmd[i]
+
+        # Gait clock.  Measurable: generated on the robot from its own timer.
+        phase = np.array([math.sin(2 * math.pi * self.phase[i]),
+                          math.cos(2 * math.pi * self.phase[i])])
+
+        # Tendon reel-in, normalised by stroke.  Measurable: each servo's
+        # encoder gives the spool angle; spool radius x angle = cable taken in.
+        # (Approximation: a slack tendon makes spool angle and cable length
+        # differ; the sim reports the tendon length.)
+        motor_pos = (d.ten_length - self.l0) / self.stroke
+
+        # Tendon tension, normalised by the 200 N limit.  Measurable: servos
+        # report present load/current, which is proportional to spool torque
+        # = tension x spool radius (noisy and coarse on real hardware).
+        motor_load = -d.actuator_force / self.fmax
+
+        # Previous policy output.  Measurable: the controller remembers what it sent.
+        prev_action = self.prev_action[i]
+
+        return np.concatenate([
+            gravity, gyro, cmd, phase, motor_pos, motor_load, prev_action,
+        ])
+
+    def _obs_full(self, i: int) -> np.ndarray:
+        """Legacy 120-d observation with simulator-only state (height, velocity, feet)."""
         d = self.datas[i]
         q = d.qpos[3:7]
         R = quat_to_R(q)
@@ -302,9 +380,11 @@ class QuadrupedCpuEnv:
         nom[:, :, 6] = pull       # outer_back
         nom32 = nom.reshape(self.num_envs, 32)
 
-        # policy action is a residual on the nominal gait.  32 actions map
-        # directly to the 32 tendons; 16 actions keep the old diagonal-pair
-        # mapping for checkpoint compatibility.
+        # policy action is a residual on the nominal gait.  16 actions tie the
+        # diagonal legs: actions 0-7 drive FL and BR, actions 8-15 drive FR and
+        # BL (same tendon order in every leg; all legs face the same way, so the
+        # same command gives the same motion).  32 actions map one-to-one to
+        # the tendons (every leg independent).
         if self.num_actions == 16:
             res32 = np.concatenate(
                 [action[:, 0:8], action[:, 8:16], action[:, 8:16], action[:, 0:8]], axis=1

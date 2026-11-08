@@ -16,11 +16,17 @@ forward walking only, PPO, no surrogate model.
   rearward and lift it. A stance-phase back-tendon pull can also push the body
   forward; `swing_frac < 0.5` adds double support. Pulling front and back
   together cancels propulsion because both directions shorten the leg.
-- **32 policy actions**: one residual tendon pull per actuator. The policy can
-  correct every leg independently around the nominal trot.
-- 120 observations: trunk quat, body velocity, angular velocity, height error,
-  command, gait phase, 32 tendon lengths, 32 tendon forces, 4 foot heights,
-  4 foot vertical velocities, previous 32 actions.
+- **16 policy actions (diagonal legs tied)**: one residual tendon pull per
+  tendon, shared by each diagonal pair: actions 0–7 drive FL and BR, 8–15 drive
+  FR and BL. `--action-dim 32` gives every leg its own 8 (the older checkpoints).
+- **91 hardware observations** (`obs_mode="hardware"`, default): gravity
+  direction (accelerometer, 3), angular velocity (gyro, 3), command (3), gait
+  phase (2), 32 servo positions, 32 servo loads, previous 16 actions. No height,
+  body velocity or foot state, because the real robot cannot measure them.
+  `--obs-mode full` keeps the legacy set (trunk quat, height error, body
+  velocity, foot heights/velocities; 120 values with 32 actions).
+- `evaluate` and `robustness` read the observation mode and action count from
+  the checkpoint, so old and new checkpoints use the same commands.
 - CPU MuJoCo + `rsl-rl` PPO; no MJX/Warp required.
 - Servos are stronger than the original single-leg model: `kp=8000`,
   `kv=80`, still limited to 2 N·m / 200 N and 31.4 mm stroke.
