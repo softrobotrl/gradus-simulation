@@ -1,10 +1,14 @@
 {
-  "document_id": "e8da7c50681f40644f3812fb",
-  "workspace_id": "71bd24dd8d18a5e53f7ffb25",
-  "partstudio_id": "cd41842204143b0c2cc06855",
-  "source_assembly_id": "a388868beab8a28867031630",
-  "sim_assembly_id": "32abf31949e6fa2193ae31aa",
-  "sim_assembly_name": "Leg-Sim",
+  "document_id": "ee938c509aab09f13ed20423",
+  "workspace_id": "91dfacf08bedc9f37dd5152e",
+  "partstudio_id": "e2e5289679f5ae212699fadc",
+  "source_assembly_id": "cf7c030f13cd05e6297e246f",
+  "sim_assembly_id": "cf7c030f13cd05e6297e246f",
+  "sim_assembly_name": "Sim-Leg-Assembly",
+  "assembly_mode": "nested",
+  "backbone_bore_radius_m": 0.004862,
+  "tendon_inner_radius_m": 0.0191,
+  "tendon_outer_radius_m": 0.0291,
   "rod_diameter_m": 0.0079375,
   "rod_youngs_modulus_pa": 30000000000.0,
   "pla_density_kg_m3": 1240.0,
@@ -16,5 +20,5 @@
   "servo_kp": 8000.0,
   "servo_kv": 80.0,
   "fix_base": true,
-  "rotate_to_axes": true
+  "rotate_to_axes": false
 }

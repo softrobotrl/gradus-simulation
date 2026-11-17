@@ -54,7 +54,52 @@ the foot centre.
 
 ---
 
-## Source document
+## Demo leg (`Sim-Leg-Assembly`, default)
+
+`mujoco_to_mjcf/config.json` now points at the newer demo CAD:
+
+| Item | ID |
+|---|---|
+| Document | `ee938c509aab09f13ed20423` (`Demo-Leg`) |
+| Workspace | `91dfacf08bedc9f37dd5152e` |
+| Assembly | `cf7c030f13cd05e6297e246f` (`Sim-Leg-Assembly`) |
+| Mode | `assembly_mode: "nested"` |
+
+The demo assembly already has one instance per station (the two printed halves
+live inside each sub-assembly) and 13 top-level **ball mates** named `joint_a`
+… `joint_foot`.  `onshape-to-robot` exports the 14 bodies **without joints**;
+`merge.py --nested` therefore:
+
+1. reads the nested occurrence tree from Onshape,
+2. maps each sub-assembly's internal instances to their part studios,
+3. finds the tendon holes by their radius from the backbone bore
+   (inner = 19.1 mm, outer = 29.1 mm, bore = 4.862 mm),
+4. sorts the 14 stations top-to-bottom and nests the flat o2r bodies into a
+   chain, with one ball joint at each gap midpoint,
+5. adds the sites, 4 inner + 4 outer tendons, 8 servos, rod spring, and mass.
+
+The top-level ball mates are **not** used; the chain is rebuilt from the
+occurrence transforms.  The hip plate is clocked 45° relative to the disk
+stacks, so the old “first station hole nearest +45° → +X” naming rule is kept:
+each station still gets four distinct direction names.
+
+Build:
+
+```bash
+set -a && . ./.env && set +a
+python -m mujoco_to_mjcf.build --out urdf/gradus/demo
+python -m single_leg_demo.build_rig
+```
+
+Output: `urdf/gradus/demo/leg.xml`, `rig.xml`, `assets/`.  See
+[`single_leg_demo/README.md`](../single_leg_demo/README.md) for the rail and
+PPO environment.
+
+The original clean-`Leg-Sim` flow below is still available: set
+`assembly_mode: "clean"` and restore the old document / workspace / part studio
+/ assembly IDs in `config.json`.
+
+## Source document — original Leg-Sim (clean mode)
 
 | Item | ID |
 |---|---|

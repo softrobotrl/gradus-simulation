@@ -141,15 +141,24 @@ def main() -> None:
     ps = cfg["partstudio_id"]
     src = cfg["source_assembly_id"]
     name = cfg.get("sim_assembly_name", "Leg-Sim")
+    nested = cfg.get("assembly_mode", "clean") == "nested"
 
-    # --- which Leg-Sim assembly -------------------------------------------- #
-    asm = args.assembly or cfg.get("sim_assembly_id")
-    if args.rebuild:
-        asm = build(did, wid, ps, src, name)
-    elif not (asm and is_valid(did, wid, asm)):
-        asm = ensure(did, wid, ps, src, name)
+    # --- which assembly ---------------------------------------------------- #
+    if nested:
+        # The demo leg already has one instance per station (the two printed
+        # halves live inside each sub-assembly) and 13 top-level ball mates.
+        # onshape-to-robot exports the 14 stations as free bodies, so merge.py
+        # rebuilds the chain itself instead of relying on dof_* mates.
+        asm = args.assembly or cfg.get("sim_assembly_id") or src
+        print(f"* nested assembly {name}: {asm}")
     else:
-        print(f"* reusing {name}: {asm}")
+        asm = args.assembly or cfg.get("sim_assembly_id")
+        if args.rebuild:
+            asm = build(did, wid, ps, src, name)
+        elif not (asm and is_valid(did, wid, asm)):
+            asm = ensure(did, wid, ps, src, name)
+        else:
+            print(f"* reusing {name}: {asm}")
 
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -198,6 +207,13 @@ def main() -> None:
             "--servo-kp", str(args.servo_kp if args.servo_kp is not None else cfg["servo_kp"]),
             "--servo-kv", str(args.servo_kv if args.servo_kv is not None else cfg["servo_kv"]),
         ]
+        if nested:
+            merge.extend([
+                "--nested",
+                "--bore-r", str(cfg.get("backbone_bore_radius_m", 0.004862)),
+                "--inner-r", str(cfg.get("tendon_inner_radius_m", 0.0191)),
+                "--outer-r", str(cfg.get("tendon_outer_radius_m", 0.0291)),
+            ])
         if (args.servo or cfg.get("use_servos", False)) and not args.motors:
             merge.append("--servo")
         if args.no_rotate or not cfg.get("rotate_to_axes", True):
