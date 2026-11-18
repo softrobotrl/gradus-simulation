@@ -48,7 +48,7 @@ class RigEnvTests(unittest.TestCase):
         try:
             obs = env.reset()
             self.assertEqual(obs["policy"].shape, (2, HW_FRAME * cfg.obs_history))
-            self.assertEqual(obs["critic"].shape, (2, 115))
+            self.assertEqual(obs["critic"].shape, (2, 115 + 12))
             self.assertTrue(torch.isfinite(obs["policy"]).all())
             start = np.array([d.qpos[0] for d in env.datas])
             action = torch.zeros(2, env.num_actions)
@@ -123,6 +123,76 @@ class RigEnvTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_dr_off_shares_nominal_model(self):
+        env = SingleLegRigEnv(RigConfig(num_envs=2, num_threads=1, episode_steps=20))
+        try:
+            self.assertFalse(env.per_env_models)
+            self.assertIs(env.models[0], env.models[1])
+            self.assertEqual(env.dr_params(0)["friction"], 1.0)
+            np.testing.assert_allclose(env.calib, 0.0)
+        finally:
+            env.close()
+
+    def test_dr_draws_differ_per_env_and_stay_in_range(self):
+        cfg = RigConfig(num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
+        env = SingleLegRigEnv(cfg)
+        try:
+            params = [env.dr_params(i) for i in range(6)]
+            frictions = [p["friction"] for p in params]
+            self.assertGreater(len(set(np.round(frictions, 6))), 1)
+            for p in params:
+                self.assertTrue(cfg.dr_friction[0] <= p["friction"] <= cfg.dr_friction[1])
+                self.assertTrue(cfg.dr_battery[0] <= p["battery"] <= cfg.dr_battery[1])
+                self.assertTrue(cfg.dr_servo_kp[0] <= p["servo_kp"] <= cfg.dr_servo_kp[1])
+                self.assertTrue(0.0 <= p["delay_ms"] <= 20.0)
+            self.assertTrue(np.all(np.abs(env.calib) <= cfg.dr_servo_calib))
+            obs, reward, *_ = env.step(torch.zeros(6, env.num_actions))
+            self.assertTrue(torch.isfinite(obs["policy"]).all())
+            self.assertTrue(torch.isfinite(reward).all())
+        finally:
+            env.close()
+
+    def test_dr_scale_zero_is_nominal(self):
+        env = SingleLegRigEnv(RigConfig(num_envs=2, num_threads=1, episode_steps=20,
+                                        dr_enabled=True, dr_scale=0.0))
+        try:
+            p = env.dr_params(1)
+            self.assertAlmostEqual(p["friction"], 1.0)
+            self.assertAlmostEqual(p["battery"], 1.0)
+            self.assertEqual(p["delay_ms"], 0.0)
+        finally:
+            env.close()
+
+    def test_full_control_delay_holds_previous_command(self):
+        # a 10-substep (20 ms) delay: the first step after a new command
+        # still chases the old one, so the servo setpoint does not move
+        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                        reset_noise=0.0, dr_override={"delay": 10}))
+        try:
+            env.reset()
+            before = env.datas[0].ctrl.copy()
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            np.testing.assert_allclose(env.datas[0].ctrl, before, atol=1e-12)
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            self.assertGreater(np.abs(env.datas[0].ctrl - before).max(), 0.0)
+        finally:
+            env.close()
+
+    def test_voltage_sag_weakens_and_slows_servos(self):
+        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                        reset_noise=0.0,
+                                        dr_override={"battery": 0.5, "sag": 0.0}))
+        try:
+            env.reset()
+            before = env.datas[0].ctrl.copy()
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            np.testing.assert_allclose(env.models[0].actuator_forcerange[:, 0], -0.5 * env.fmax)
+            moved = np.abs(env.datas[0].ctrl - before).max()
+            full = env.cfg["servo_speed"] * env.m.opt.timestep * env.n_substeps
+            self.assertLessEqual(moved, 0.5 * full + 1e-9)
+        finally:
+            env.close()
+
     def test_full_mode_matches_legacy_size(self):
         cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
                         obs_mode="full")
@@ -130,7 +200,27 @@ class RigEnvTests(unittest.TestCase):
         try:
             obs = env.reset()
             self.assertEqual(obs["policy"].shape, (1, 115))
-            torch.testing.assert_close(obs["policy"], obs["critic"])
+            # the policy never sees the randomized values; the critic does
+            torch.testing.assert_close(obs["policy"], obs["critic"][:, :115])
+            self.assertEqual(obs["critic"].shape, (1, 127))
+        finally:
+            env.close()
+
+    def test_critic_sees_randomized_values(self):
+        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                        dr_override={"friction": 0.4, "battery": 0.8}))
+        try:
+            obs = env.reset()
+            tail = obs["critic"][0, 115:].numpy()
+            names = list(env.dr_params(0))
+            self.assertAlmostEqual(float(tail[names.index("friction")]), 0.4, places=5)
+            self.assertAlmostEqual(float(tail[names.index("battery")]), 0.8, places=5)
+            off = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                            critic_dr_params=False))
+            try:
+                self.assertEqual(off.num_critic_obs, 115)
+            finally:
+                off.close()
         finally:
             env.close()
 

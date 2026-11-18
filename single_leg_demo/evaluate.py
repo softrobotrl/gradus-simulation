@@ -47,6 +47,7 @@ def main() -> None:
     # Runs from before the servo speed limit / fixed pull_bias used neither.
     obs_mode, obs_history = "full", 1
     servo_speed, fixed_pull_bias = 0.0, False
+    critic_dr_params = False          # older critics had no randomized-value inputs
     train_cfg = args.ckpt.parent / "config.json"
     if train_cfg.exists():
         saved = json.loads(train_cfg.read_text()).get("environment", {})
@@ -55,6 +56,7 @@ def main() -> None:
         obs_history = int(saved.get("obs_history", obs_history))
         servo_speed = float(saved.get("servo_speed", servo_speed))
         fixed_pull_bias = bool(saved.get("fixed_pull_bias", fixed_pull_bias))
+        critic_dr_params = bool(saved.get("critic_dr_params", critic_dr_params))
 
     cfg = RigConfig(
         num_envs=1,
@@ -70,6 +72,7 @@ def main() -> None:
         obs_history=obs_history,
         servo_speed=servo_speed,
         fixed_pull_bias=fixed_pull_bias,
+        critic_dr_params=critic_dr_params,
         reset_noise=0.0,
     )
     env = SingleLegRigEnv(cfg)

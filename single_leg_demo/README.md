@@ -75,8 +75,10 @@ time order are in [STATES.md](STATES.md). Per 20 ms step, 41 values:
 The last 8 steps are stacked, so the policy input is 328 values.  The critic
 (training only) gets the full 115-value simulator state: slider position and
 velocity, target velocity, phase, 13 ball-joint rotations and velocities,
-tendon lengths and forces, servo targets and the previous action.  Use
-`--obs-mode full` to give the policy that state instead (old behaviour).
+tendon lengths and forces, servo targets and the previous action, plus 12
+domain-randomized values (127 in total).  Use `--obs-mode full` to give the
+policy the 115-value state instead (old behaviour).  Domain randomization
+(`--dr`) is described in [domain_randomization.md](domain_randomization.md).
 
 The target velocity ("command", `cmd` in code) alternates sign every `cmd_period` seconds (2 s, ±20 % jitter).
 Its magnitude is resampled in `[cmd_min, cmd_max]` at **every reversal**, so a

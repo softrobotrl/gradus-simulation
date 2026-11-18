@@ -78,8 +78,9 @@ back by a loaded tendon, which #6 (load) confirms.
 
 These are used **only during training** and never run on the robot:
 
-- **Critic (value function):** gets the full old 115-value state (observation group `critic`),
-  including the true carriage position and velocity. It only exists to train the policy.
+- **Critic (value function):** gets the full old 115-value state plus 12 domain-randomized values
+  (friction, battery, delay, …), 127 in total (observation group `critic`), including the true
+  carriage position and velocity. It only exists to train the policy.
 - **Reward and episode ending:** use the true carriage velocity (to score tracking) and the true
   carriage position (to penalise / end episodes near the rail ends).
 
@@ -103,8 +104,9 @@ and old checkpoints. `evaluate.py` reads the mode from each run's `config.json`.
 
 ## Open items
 
-- **Sensor noise:** none yet. IMU noise and bias will use typical MPU6050-class values until the chip
-  is chosen; servo position quantisation and load noise should be added too.
+- **Sensor noise:** with `--dr`, servo positions, servo loads and the IMU get noise and bias
+  (assumed MPU6050-class IMU); see `domain_randomization.md`. Target velocity, phase, previous
+  action and last servo targets stay exact, since the controller knows them.
 - **Servo speed:** `servo_speed` is an assumed hobby-servo value; replace it with the datasheet
   speed once the servo is known.
 - **Load scaling:** the real servo's load reading must be calibrated to the same 0..1 fraction of

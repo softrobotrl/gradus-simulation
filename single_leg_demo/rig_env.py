@@ -15,9 +15,10 @@ Two observation groups (see ``single_leg_demo/STATES.md``):
 * ``critic`` (training only): the full 115-value simulator state, i.e.
   slider position/velocity, target velocity, phase, 13 ball-joint rotation
   vectors and velocities, tendon lengths, tendon forces, servo targets and
-  the previous action.
+  the previous action, plus 12 domain-randomized values (``dr_params``;
+  ``critic_dr_params=False`` drops them).
 
-``obs_mode="full"`` gives the actor the 115-value critic state (legacy runs).
+``obs_mode="full"`` gives the actor the 115-value simulator state (legacy runs).
 
 Actions are eight residuals on a fixed tendon pull ``pull_bias`` (each tendon
 just taut with the leg straight, a one-off calibration on hardware):
@@ -33,7 +34,7 @@ from __future__ import annotations
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import mujoco
 import numpy as np
@@ -97,6 +98,42 @@ class RigConfig:
     servo_speed: float = 0.07         # m/s of tendon at the spool
     fixed_pull_bias: bool = True      # False: legacy per-reset bias from sim tendon lengths
 
+    # Domain randomization, training only (see domain_randomization.md).
+    # Drawn per episode; "×" ranges multiply the model's value.  dr_scale pulls
+    # every draw toward nominal (0 = nominal, 1 = full range) for ramp-up.
+    dr_enabled: bool = False
+    dr_scale: float = 1.0
+    dr_friction: tuple = (0.5, 1.3)          # foot-floor sliding friction (absolute)
+    dr_rail_friction: tuple = (0.5, 2.0)     # × carriage frictionloss
+    dr_rail_damping: tuple = (0.5, 2.0)      # × carriage damping
+    dr_carriage_mass: tuple = (0.8, 1.2)     # × carriage mass
+    dr_segment_mass: tuple = (0.9, 1.1)      # × each leg body's mass
+    dr_stiffness: tuple = (0.8, 1.2)         # × backbone (ball joint) stiffness
+    dr_joint_damping: tuple = (0.7, 1.5)     # × ball joint damping
+    dr_servo_kp: tuple = (0.7, 1.3)          # × servo position gain
+    dr_servo_strength: tuple = (0.9, 1.1)    # × max force, per servo
+    dr_servo_calib: float = 0.001            # ± m tendon zero error, per servo
+    dr_battery: tuple = (0.8, 1.0)           # battery level (1 = full)
+    dr_sag: tuple = (0.0, 0.25)              # extra voltage drop at full servo load
+    dr_delay: tuple = (0, 10)                # control delay in 2 ms substeps (0-20 ms)
+    dr_push_prob: float = 0.005              # chance per control step of a carriage push
+    dr_push_force: float = 3.0               # ± N
+    dr_push_steps: int = 5                   # push duration in control steps (0.1 s)
+    # Sensor noise on the policy input (only when dr_enabled).
+    dr_acc_noise: float = 0.01               # g, per step
+    dr_acc_bias: float = 0.03                # ± g, per episode
+    dr_gyro_noise: float = 0.01              # rad/s, per step
+    dr_gyro_bias: float = 0.02               # ± rad/s, per episode
+    dr_servo_counts: int = 2048              # encoder steps over the full stroke
+    dr_pos_noise: float = 0.002              # servo position, fraction of stroke
+    dr_load_noise: float = 0.03              # servo load, fraction of max force
+    dr_load_scale: tuple = (0.8, 1.2)        # × load reading, per servo
+    # Fix parameters by name, e.g. {"friction": 0.4, "battery": 0.8} (works
+    # with dr_enabled False too: everything else stays nominal).
+    dr_override: dict = field(default_factory=dict)
+    # Critic (training only) also sees this episode's randomized values.
+    critic_dr_params: bool = True
+
     num_threads: int | None = None
     seed: int = 0
 
@@ -154,7 +191,38 @@ class SingleLegRigEnv:
                 f"{cfg.model_path} has no rail IMU sensors; "
                 "rebuild it with `python -m single_leg_demo.build_rig`") from exc
 
-        self.datas = [mujoco.MjData(m) for _ in range(cfg.num_envs)]
+        # --- domain randomization ------------------------------------------ #
+        # Physics parameters live on the MjModel, so randomized envs each get
+        # their own copy.  Without randomization every env shares self.m.
+        n = cfg.num_envs
+        self.per_env_models = bool(cfg.dr_enabled or cfg.dr_override)
+        self.models = ([mujoco.MjModel.from_xml_path(cfg.model_path) for _ in range(n)]
+                       if self.per_env_models else [m] * n)
+        self.nom = {k: getattr(m, k).copy() for k in (
+            "geom_friction", "body_mass", "body_inertia", "dof_damping",
+            "dof_frictionloss", "jnt_stiffness", "actuator_gainprm",
+            "actuator_biasprm", "actuator_forcerange", "actuator_ctrlrange")}
+        self.floor_geom = m.geom("floor").id
+        self.foot_geom = m.geom("foot").id
+        self.slider_body = m.body("slider").id
+        self.leg_bodies = np.array([b for b in range(1, m.nbody) if b != self.slider_body])
+        self.slide_dof = int(self.slide_joint.dofadr[0])
+        self.ball_jnt = np.array([j.id for j in self.ball_joints])
+        self.ball_dofs = np.concatenate([np.arange(a, a + 3) for a in self.ball_dadr])
+        # per-episode draws (nominal values until _randomize runs)
+        self.strength = np.ones((n, N_TENDON))
+        self.calib = np.zeros((n, N_TENDON))      # m, physical = commanded + calib
+        self.battery = np.ones(n)
+        self.sag = np.zeros(n)
+        self.delay = np.zeros(n, dtype=np.int32)  # substeps
+        self.acc_bias = np.zeros((n, 3))
+        self.gyro_bias = np.zeros((n, 3))
+        self.load_scale = np.ones((n, N_TENDON))
+        self.push_force = np.zeros(n)
+        self.push_left = np.zeros(n, dtype=np.int32)
+        self.volt = np.ones(n)                    # last supply voltage (fraction)
+
+        self.datas = [mujoco.MjData(mi) for mi in self.models]
         self.t = np.zeros(cfg.num_envs, dtype=np.int32)
         self.cmd = np.zeros(cfg.num_envs, dtype=np.float64)
         self.cmd_mag = np.zeros(cfg.num_envs, dtype=np.float64)
@@ -172,12 +240,13 @@ class SingleLegRigEnv:
         # simulated servo actually is heading, rate-limited toward this.
         self.servo_cmd = np.tile(self.l0 - self.stroke * self.pull_bias_nominal,
                                  (cfg.num_envs, 1))
+        self.servo_cmd_prev = self.servo_cmd.copy()   # previous step's command (delay)
         self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
 
         self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), HW_FRAME))
-        self.num_critic_obs = int(self._obs_full(0).shape[0])
+        self.num_critic_obs = int(self._obs_critic(0).shape[0])
         self.num_obs = (HW_FRAME * self.hist.shape[1] if cfg.obs_mode == "hardware"
-                        else self.num_critic_obs)
+                        else int(self._obs_full(0).shape[0]))
         self.obs = np.zeros((cfg.num_envs, self.num_obs), dtype=np.float32)
         self.critic_obs = np.zeros((cfg.num_envs, self.num_critic_obs), dtype=np.float32)
 
@@ -221,10 +290,23 @@ class SingleLegRigEnv:
         # lets it get there.
         setpoint = (self.l0 - d.ctrl) / self.stroke
         taut = (self.l0 - d.ten_length) / self.stroke
-        position = np.clip(np.minimum(taut, setpoint), 0.0, 1.0)
-        load = np.clip(-d.actuator_force / self.fmax, 0.0, 1.5)
+        # encoder reads in the robot's own (possibly mis-calibrated) zero
+        position = np.minimum(taut, setpoint) + self.calib[i] / self.stroke
+        load = -d.actuator_force / self.fmax
         acc = d.sensordata[self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
-        gyro = d.sensordata[self.imu_gyro_adr:self.imu_gyro_adr + 3] / self.cfg["gyro_scale"]
+        gyro = d.sensordata[self.imu_gyro_adr:self.imu_gyro_adr + 3].copy()
+        if self.cfg["dr_enabled"]:                   # sensor noise, policy input only
+            s, rng = self.cfg["dr_scale"], self.rng
+            acc = acc + self.acc_bias[i] + rng.normal(0.0, self.cfg["dr_acc_noise"] * s, 3)
+            gyro = gyro + self.gyro_bias[i] + rng.normal(0.0, self.cfg["dr_gyro_noise"] * s, 3)
+            counts = max(int(self.cfg["dr_servo_counts"]), 1)
+            position = (np.round(position * counts) / counts
+                        + rng.normal(0.0, self.cfg["dr_pos_noise"] * s, N_TENDON))
+            load = (load * self.load_scale[i]
+                    + rng.normal(0.0, self.cfg["dr_load_noise"] * s, N_TENDON))
+        position = np.clip(position, 0.0, 1.0)
+        load = np.clip(load, 0.0, 1.5)
+        gyro = gyro / self.cfg["gyro_scale"]
         return np.concatenate([
             np.array([
                 self.cmd[i] / max(self.cfg["obs_cmd_scale"], 1e-3),   # target velocity
@@ -247,9 +329,19 @@ class SingleLegRigEnv:
         else:
             self.hist[i, :-1] = self.hist[i, 1:]        # oldest first, newest last
             self.hist[i, -1] = frame
-        self.critic_obs[i] = self._obs_full(i)
+        full = self._obs_full(i)
+        self.critic_obs[i] = self._obs_critic(i, full)
         self.obs[i] = (self.hist[i].reshape(-1) if self.cfg["obs_mode"] == "hardware"
-                       else self.critic_obs[i])
+                       else full)
+
+    def _obs_critic(self, i: int, full: np.ndarray | None = None) -> np.ndarray:
+        """Critic input: full sim state (115) + randomized values (12, optional)."""
+        full = self._obs_full(i) if full is None else full
+        if not self.cfg["critic_dr_params"]:
+            return full
+        p = self.dr_params(i)
+        p["delay_ms"] /= 20.0                    # roughly 0..1 like the others
+        return np.concatenate([full, np.fromiter(p.values(), dtype=np.float64)])
 
     def _obs_td(self) -> TensorDict:
         self.obs = np.nan_to_num(self.obs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -285,8 +377,89 @@ class SingleLegRigEnv:
         ])
 
     # ------------------------------------------------------------------ #
+    def _draw(self, name: str, nominal: float = 1.0, size: int | None = None):
+        """Sample ``dr_<name>`` (lo, hi), pulled toward nominal by dr_scale.
+
+        An entry in ``dr_override`` fixes the value; with randomization off
+        everything else stays nominal.
+        """
+        override = self.cfg["dr_override"]
+        if name in override:
+            value = float(override[name])
+            return value if size is None else np.full(size, value)
+        if not self.cfg["dr_enabled"]:
+            return nominal if size is None else np.full(size, float(nominal))
+        lo, hi = self.cfg["dr_" + name]
+        u = self.rng.uniform(lo, hi, size)
+        return nominal + self.cfg["dr_scale"] * (u - nominal)
+
+    def _randomize(self, i: int) -> None:
+        """Draw this episode's physics, servo, timing and sensor parameters."""
+        self.battery[i] = self._draw("battery")
+        self.sag[i] = self._draw("sag", 0.0)
+        self.delay[i] = int(round(float(self._draw("delay", 0.0))))
+        self.strength[i] = self._draw("servo_strength", 1.0, N_TENDON)
+        c = self.cfg["dr_servo_calib"] * self.cfg["dr_scale"]
+        if "servo_calib" in self.cfg["dr_override"]:
+            self.calib[i] = float(self.cfg["dr_override"]["servo_calib"])
+        elif self.cfg["dr_enabled"]:
+            self.calib[i] = self.rng.uniform(-c, c, N_TENDON)
+        else:
+            self.calib[i] = 0.0
+        if self.cfg["dr_enabled"]:
+            s = self.cfg["dr_scale"]
+            self.acc_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_acc_bias"] * s
+            self.gyro_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_gyro_bias"] * s
+            self.load_scale[i] = self._draw("load_scale", 1.0, N_TENDON)
+        self.push_left[i] = 0
+        self.volt[i] = self.battery[i]
+        if not self.per_env_models:
+            return
+
+        mi, nom = self.models[i], self.nom
+        for key, value in nom.items():                 # back to nominal first
+            getattr(mi, key)[:] = value
+        mi.geom_friction[[self.floor_geom, self.foot_geom], 0] = self._draw(
+            "friction", float(nom["geom_friction"][self.foot_geom, 0]))
+        mi.dof_frictionloss[self.slide_dof] *= self._draw("rail_friction")
+        mi.dof_damping[self.slide_dof] *= self._draw("rail_damping")
+        k = self._draw("carriage_mass")
+        mi.body_mass[self.slider_body] *= k
+        mi.body_inertia[self.slider_body] *= k
+        k = self._draw("segment_mass", 1.0, len(self.leg_bodies))
+        mi.body_mass[self.leg_bodies] *= k
+        mi.body_inertia[self.leg_bodies] *= k[:, None]
+        mi.jnt_stiffness[self.ball_jnt] *= self._draw("stiffness")
+        mi.dof_damping[self.ball_dofs] *= self._draw("joint_damping")
+        k = self._draw("servo_kp")
+        mi.actuator_gainprm[:, 0] *= k
+        mi.actuator_biasprm[:, 1] *= k
+        mi.actuator_ctrlrange[:] = nom["actuator_ctrlrange"] + self.calib[i][:, None]
+        mi.actuator_forcerange[:, 0] = nom["actuator_forcerange"][:, 0] * self.strength[i] * self.volt[i]
+
+    def dr_params(self, i: int) -> dict:
+        """This episode's randomized values (nominal = 1, or 0 for sag/delay)."""
+        mi, nom = self.models[i], self.nom
+        return {
+            "friction": float(mi.geom_friction[self.foot_geom, 0]),
+            "rail_friction": float(mi.dof_frictionloss[self.slide_dof] / nom["dof_frictionloss"][self.slide_dof]),
+            "rail_damping": float(mi.dof_damping[self.slide_dof] / nom["dof_damping"][self.slide_dof]),
+            "carriage_mass": float(mi.body_mass[self.slider_body] / nom["body_mass"][self.slider_body]),
+            "stiffness": float(mi.jnt_stiffness[self.ball_jnt[0]] / nom["jnt_stiffness"][self.ball_jnt[0]]),
+            "joint_damping": float(mi.dof_damping[self.ball_dofs[0]] / nom["dof_damping"][self.ball_dofs[0]]),
+            "servo_kp": float(mi.actuator_gainprm[0, 0] / nom["actuator_gainprm"][0, 0]),
+            "servo_strength": float(self.strength[i].mean()),
+            "battery": float(self.battery[i]),
+            "sag": float(self.sag[i]),
+            "delay_ms": float(self.delay[i] * self.m.opt.timestep * 1000),
+            "volt": float(self.volt[i]),
+        }
+
     def _reset_one(self, i: int, randomize: bool = True) -> None:
+        self._randomize(i)
+        mi = self.models[i]
         d = self.datas[i]
+        d.xfrc_applied[:] = 0.0
         d.qpos[:] = self.qpos_straight
         d.qvel[:] = 0.0
         # Randomise which way the slight initial bend leans, so the policy
@@ -318,7 +491,7 @@ class SingleLegRigEnv:
                     w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
                 ])
                 d.qpos[adr:adr + 4] = q / np.linalg.norm(q)
-        mujoco.mj_forward(self.m, d)
+        mujoco.mj_forward(mi, d)
         tip = d.site_xpos[self.tip_id]
         # put the foot near the rail centre; the hip moves the other way
         d.qpos[self.slide_qadr] = -tip[0] + self.rng.uniform(-0.03, 0.03) * noise
@@ -328,18 +501,19 @@ class SingleLegRigEnv:
             pull = self.pull_bias_nominal
         else:  # legacy: pull that holds this episode's bent pose (sim-only)
             d.ctrl[:] = self.l0
-            mujoco.mj_forward(self.m, d)
+            mujoco.mj_forward(mi, d)
             pull = np.clip((self.l0 - d.ten_length) / self.stroke, 0.0, 1.0)
         self.pull_bias[i] = pull
-        hold = self.l0 - self.stroke * pull
+        hold = self.l0 - self.stroke * pull          # what the controller sends
         self.servo_cmd[i] = hold
-        d.ctrl[:] = hold
-        mujoco.mj_forward(self.m, d)
+        self.servo_cmd_prev[i] = hold
+        d.ctrl[:] = hold + self.calib[i]             # where the servo physically goes
+        mujoco.mj_forward(mi, d)
 
         if self.cfg["reset_settle"] > 0:
             for _ in range(int(self.cfg["reset_settle"])):
-                mujoco.mj_step(self.m, d)
-            d.ctrl[:] = hold
+                mujoco.mj_step(mi, d)
+            d.ctrl[:] = hold + self.calib[i]
 
         self.t[i] = 0
         self.prev_action[i] = 0.0
@@ -410,15 +584,29 @@ class SingleLegRigEnv:
         return float(reward), bool(failed), info
 
     # ------------------------------------------------------------------ #
-    def _phys_chunk(self, idxs: np.ndarray, cmd: np.ndarray) -> None:
+    def _phys_chunk(self, idxs: np.ndarray, cmd: np.ndarray, cmd_prev: np.ndarray,
+                    push: np.ndarray) -> None:
         speed = self.cfg["servo_speed"]
-        max_dl = speed * self.m.opt.timestep if speed > 0 else np.inf
+        step_dl = speed * self.m.opt.timestep if speed > 0 else np.inf
+        fmax_nom = self.nom["actuator_forcerange"][:, 0]          # negative (pull)
         for i in idxs:
-            d = self.datas[i]
-            for _ in range(self.n_substeps):
-                # servo setpoint moves toward the command at its top speed
-                d.ctrl[:] += np.clip(cmd[i] - d.ctrl, -max_dl, max_dl)
-                mujoco.mj_step(self.m, d)
+            d, mi = self.datas[i], self.models[i]
+            # physical setpoints: what was commanded, shifted by calibration error
+            new, old = cmd[i] + self.calib[i], cmd_prev[i] + self.calib[i]
+            d.xfrc_applied[self.slider_body, 0] = push[i]
+            for k in range(self.n_substeps):
+                volt = 1.0
+                if self.per_env_models:
+                    # voltage sag: lower battery and heavy total load make every
+                    # servo weaker and slower
+                    load = float(np.mean(np.clip(-d.actuator_force / self.fmax, 0.0, 1.0)))
+                    volt = self.battery[i] * (1.0 - self.sag[i] * load)
+                    mi.actuator_forcerange[:, 0] = fmax_nom * self.strength[i] * volt
+                target = old if k < self.delay[i] else new            # control delay
+                max_dl = step_dl * volt
+                d.ctrl[:] += np.clip(target - d.ctrl, -max_dl, max_dl)  # top speed
+                mujoco.mj_step(mi, d)
+            self.volt[i] = volt
 
     def step(self, actions, auto_reset: bool = True):
         action_raw = actions.detach().cpu().numpy() if hasattr(actions, "detach") else np.asarray(actions)
@@ -431,10 +619,24 @@ class SingleLegRigEnv:
             self.pull_bias + self.cfg["residual_scale"] * action, 0.0, 1.0)
         target_ctrl = self.l0[None, :] - self.stroke[None, :] * target_pull
         # controller-side smoothing of the sent target, then the servos chase it
+        self.servo_cmd_prev = self.servo_cmd.copy()
         self.servo_cmd = np.clip(0.5 * self.servo_cmd + 0.5 * target_ctrl,
                                  self.ctrl_lo, self.l0)
-        cmd = self.servo_cmd.copy()
-        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd), self._chunks))
+        cmd, cmd_prev = self.servo_cmd.copy(), self.servo_cmd_prev.copy()
+
+        # random carriage pushes (decided here so the RNG stays on this thread)
+        if self.cfg["dr_enabled"]:
+            p = self.cfg["dr_push_prob"] * self.cfg["dr_scale"]
+            start = (self.push_left == 0) & (self.rng.random(self.num_envs) < p)
+            if start.any():
+                f = self.cfg["dr_push_force"]
+                self.push_force[start] = self.rng.uniform(-f, f, int(start.sum()))
+                self.push_left[start] = self.cfg["dr_push_steps"]
+        push = np.where(self.push_left > 0, self.push_force, 0.0)
+        self.push_left = np.maximum(self.push_left - 1, 0)
+
+        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd, cmd_prev, push),
+                            self._chunks))
 
         reward = np.zeros(self.num_envs, dtype=np.float32)
         done = np.zeros(self.num_envs, dtype=bool)

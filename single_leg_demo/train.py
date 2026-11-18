@@ -100,6 +100,10 @@ def main() -> None:
                    help="actor observation: hardware sensors (default) or full sim state")
     p.add_argument("--obs-history", type=int, default=None,
                    help="hardware steps stacked for the actor (default 8)")
+    p.add_argument("--dr", action="store_true",
+                   help="domain randomization (see domain_randomization.md)")
+    p.add_argument("--dr-ramp", type=int, default=300,
+                   help="iterations to widen randomization from nominal to full (0 = full at once)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -113,6 +117,7 @@ def main() -> None:
         num_threads=args.num_threads,
         episode_steps=args.episode_steps,
         seed=args.seed,
+        dr_enabled=args.dr,
     )
     for key in ("residual_scale", "cmd_min", "cmd_max", "cmd_period",
                 "vel_weight", "vel_sigma", "vel_l2_weight", "progress_weight",
@@ -138,7 +143,7 @@ def main() -> None:
     }
     (run_dir / "config.json").write_text(json.dumps(settings, indent=2))
     print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} "
-          f"({cfg.obs_mode}) critic_obs={env.num_critic_obs} "
+          f"({cfg.obs_mode}) critic_obs={env.num_critic_obs} dr={cfg.dr_enabled} "
           f"threads={env.num_threads} device={args.device}")
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)
@@ -162,23 +167,43 @@ def main() -> None:
             dist.std.requires_grad_(False)
         print(f"* fixed action std at {args.std}")
 
+    # Domain randomization ramp-up: dr_scale goes 0 -> 1 over --dr-ramp
+    # iterations, updated between 50-iteration chunks.  New draws take effect
+    # as each env resets.  A resumed run continues at full randomization.
+    ramp = args.dr_ramp if (cfg.dr_enabled and not args.resume) else 0
+    if cfg.dr_enabled:
+        env.cfg["dr_scale"] = 0.0 if ramp > 0 else 1.0
+        env.reset()
+    trained = [0]   # iterations run so far (rsl_rl's own counter overlaps across learn calls)
+
+    def learn(n: int, init_random: bool = False) -> None:
+        done = 0
+        while done < n:
+            chunk = n - done if ramp <= 0 else min(50, n - done)
+            if ramp > 0:
+                env.cfg["dr_scale"] = min(1.0, trained[0] / ramp)
+                print(f"* dr_scale={env.cfg['dr_scale']:.2f} (iteration {trained[0]})")
+            runner.learn(chunk, init_at_random_ep_len=init_random and done == 0)
+            done += chunk
+            trained[0] += chunk
+
     full_min, full_max = cfg.cmd_min, cfg.cmd_max
     try:
         if args.resume or args.warmup <= 0:
-            runner.learn(args.iterations, init_at_random_ep_len=True)
+            learn(args.iterations, init_random=True)
         else:
             env.cfg["cmd_min"] = min(0.05, full_min)
             env.cfg["cmd_max"] = min(0.08, full_max)
             first = min(args.warmup, args.iterations)
             print(f"* warmup: {first} iterations at cmd={env.cfg['cmd_min']:.2f}.."
                   f"{env.cfg['cmd_max']:.2f} m/s")
-            runner.learn(first, init_at_random_ep_len=True)
+            learn(first, init_random=True)
             remaining = args.iterations - first
             if remaining > 0:
                 env.cfg["cmd_min"] = full_min
                 env.cfg["cmd_max"] = full_max
                 print(f"* full: {remaining} iterations at cmd={full_min:.2f}..{full_max:.2f} m/s")
-                runner.learn(remaining)
+                learn(remaining)
     finally:
         final = run_dir / f"model_{runner.current_learning_iteration}.pt"
         try:

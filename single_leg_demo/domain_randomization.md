@@ -1,6 +1,9 @@
 # Single-leg rig: domain randomization
 
-Status: steps 1–2 **done**; steps 3–7 planned.
+Status: steps 1–5 **done**; steps 6–7 planned.
+
+Turn it on with `python -m single_leg_demo.train --dr` (`RigConfig(dr_enabled=True)`); it is off by
+default. `python -m single_leg_demo.validate --dr` prints each env's drawn values.
 
 ## Why
 
@@ -35,6 +38,15 @@ Drawn once per episode. ×1.0 = current value.
 The rig's real values are not measured, so the ranges are deliberately wide to make the policy
 robust rather than to match the hardware. They live in `RigConfig`.
 
+Sensor noise values (policy input only):
+
+| sensor | noise |
+|---|---|
+| IMU accelerometer | bias ±0.03 g per episode + noise σ 0.01 g |
+| IMU gyro | bias ±0.02 rad/s per episode + noise σ 0.01 rad/s |
+| servo position | rounded to 1/2048 of the stroke + noise σ 0.002 |
+| servo load | × 0.8–1.2 per servo per episode + noise σ 0.03 |
+
 ## Voltage sag
 
 Lower voltage makes a servo weaker and slower. It drops more when all servos pull hard at once, so
@@ -51,18 +63,21 @@ This needs a servo speed limit, which the sim does not have yet (see step 1 belo
 ## Training only
 
 - **Sensor noise** is added to the policy's input only; the critic sees clean values.
-- **The critic also sees the randomized values** (friction, battery level, …), since it never runs
-  on hardware. This makes training easier.
-- **Ramp-up:** training starts with no randomization and widens to the full ranges over the first
-  few hundred iterations.
+- **The critic also sees the randomized values**: 12 extra inputs (friction, rail friction and
+  damping, carriage mass, stiffness, joint damping, servo gain and strength, battery, sag, delay,
+  current voltage), since it never runs on hardware. This makes training easier.
+- **Ramp-up:** training starts with no randomization and widens linearly to the full ranges over
+  `--dr-ramp` iterations (default 300), updated every 50 iterations. A resumed run uses full ranges.
 
 ## Implementation order
 
 1. ✅ Servo speed limit: `servo_speed`, assumed 0.07 m/s at the spool.
 2. ✅ Fixed `pull_bias`: tendons just taut with the leg straight (pull 0 for this model).
-3. One MuJoCo model per env, randomized at reset; `dr_enabled` switch.
-4. Voltage sag, control delay and pushes in the step loop; sensor noise in `_hw_frame`.
-5. Randomized values added to the critic input; ramp-up in `train.py`.
+3. ✅ One MuJoCo model per env (4 MB each), randomized at reset; `dr_enabled` switch.
+   `dr_override` fixes any parameter by name, e.g. `{"friction": 0.4}`.
+4. ✅ Voltage sag, control delay and pushes in the step loop; sensor noise in `_hw_frame`.
+   About 25 % slower simulation with randomization on.
+5. ✅ Randomized values added to the critic input (127 values); ramp-up in `train.py` (`--dr-ramp`).
 6. Robustness sweep in `evaluate.py`: tracking error vs friction, battery level and delay.
 7. Train with and without randomization and compare on the sweep.
 
