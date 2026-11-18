@@ -42,7 +42,7 @@ def training_config(name: str, steps: int) -> dict:
             "value_loss_coef": 0.5,
         },
         "actor": {
-            "class_name": "MLPModel",
+            "class_name": "single_leg_demo.models:ClippedMLPModel",   # clips normalized inputs
             "hidden_dims": [256, 256],
             "activation": "elu",
             "obs_normalization": True,
@@ -53,7 +53,7 @@ def training_config(name: str, steps: int) -> dict:
             },
         },
         "critic": {
-            "class_name": "MLPModel",
+            "class_name": "single_leg_demo.models:ClippedMLPModel",   # clips normalized inputs
             "hidden_dims": [256, 256],
             "activation": "elu",
             "obs_normalization": True,

@@ -78,8 +78,8 @@ back by a loaded tendon, which #6 (load) confirms.
 
 These are used **only during training** and never run on the robot:
 
-- **Critic (value function):** gets the full old 115-value state plus 12 domain-randomized values
-  (friction, battery, delay, …), 127 in total (observation group `critic`), including the true
+- **Critic (value function):** gets the full old 115-value state plus 13 domain-randomized values
+  (friction, rail height, battery, delay, …), 128 in total (observation group `critic`), including the true
   carriage position and velocity. It only exists to train the policy.
 - **Reward and episode ending:** use the true carriage velocity (to score tracking) and the true
   carriage position (to penalise / end episodes near the rail ends).

@@ -21,6 +21,7 @@ Drawn once per episode. ×1.0 = current value.
 | **rail** | carriage friction | 0.2 N | ×0.5 – 2.0 |
 | | carriage damping | 0.6 | ×0.5 – 2.0 |
 | | carriage mass | 2.0 kg | ×0.8 – 1.2 |
+| | rail (hip) height | 2 mm below straight leg | −8 mm to +0.5 mm |
 | **leg** | segment masses | from CAD | ×0.9 – 1.1 each |
 | | backbone stiffness | 128 | ×0.8 – 1.2 |
 | | joint damping | 0.5 | ×0.7 – 1.5 |
@@ -37,6 +38,10 @@ Drawn once per episode. ×1.0 = current value.
 
 The rig's real values are not measured, so the ranges are deliberately wide to make the policy
 robust rather than to match the hardware. They live in `RigConfig`.
+
+**Rail height** covers build and assembly error. The range is lopsided on purpose: at +2 mm or
+more the straight leg no longer reaches the floor and the leg can barely move the carriage (no
+policy can fix that, so check it on the real rig); down to −10 mm the leg still drives the rail.
 
 Sensor noise values (policy input only):
 
@@ -58,14 +63,26 @@ max force = 200 N × voltage
 max speed = servo speed × voltage
 ```
 
-This needs a servo speed limit, which the sim does not have yet (see step 1 below).
+This uses the servo speed limit from step 1 below.
 
 ## Training only
 
 - **Sensor noise** is added to the policy's input only; the critic sees clean values.
-- **The critic also sees the randomized values**: 12 extra inputs (friction, rail friction and
-  damping, carriage mass, stiffness, joint damping, servo gain and strength, battery, sag, delay,
-  current voltage), since it never runs on hardware. This makes training easier.
+- **The critic also sees the randomized values**: 13 extra inputs (friction, rail friction and
+  damping, rail height, carriage mass, stiffness, joint damping, servo gain and strength, battery,
+  sag, delay, current voltage), since it never runs on hardware. This makes training easier.
+
+## Input limits
+
+Every input is scaled by hand to roughly ±1, then rsl_rl normalizes it by a running mean and
+std. That normalizer has no limit, and some inputs barely vary in simulation (the rail gyro's std
+is about 0.004), so a modest real-world reading could arrive as dozens of standard deviations.
+Two guards:
+
+- **Physical limits** in the env (and needed in the hardware controller too): IMU accelerometer
+  ±3 g, gyro ±8 rad/s, servo position 0–1, servo load 0–1.5.
+- **Normalized inputs clipped to ±5 std** (`single_leg_demo/models.py`, `ClippedMLPModel`, used
+  for both the policy and the critic). Same weights as before, so older checkpoints still load.
 - **Ramp-up:** training starts with no randomization and widens linearly to the full ranges over
   `--dr-ramp` iterations (default 300), updated every 50 iterations. A resumed run uses full ranges.
 
@@ -77,10 +94,10 @@ This needs a servo speed limit, which the sim does not have yet (see step 1 belo
    `dr_override` fixes any parameter by name, e.g. `{"friction": 0.4}`.
 4. ✅ Voltage sag, control delay and pushes in the step loop; sensor noise in `_hw_frame`.
    About 25 % slower simulation with randomization on.
-5. ✅ Randomized values added to the critic input (127 values); ramp-up in `train.py` (`--dr-ramp`).
+5. ✅ Randomized values added to the critic input (128 values); ramp-up in `train.py` (`--dr-ramp`).
 6. ✅ Robustness sweep: `python -m single_leg_demo.robustness --ckpt <model.pt>`. Changes one
-   parameter at a time (friction, rail friction, carriage mass, battery, sag, delay up to 30 ms,
-   servo gain), then noise + pushes, then everything randomized; some values go past the training
+   parameter at a time (friction, rail friction, rail height, carriage mass, battery, sag, delay up
+   to 30 ms, servo gain), then noise + pushes, then everything randomized; some values go past the training
    ranges. Prints tracking error, failure rate and survival time, and writes a CSV next to the
    checkpoint.
 7. Train with and without randomization and compare on the sweep.

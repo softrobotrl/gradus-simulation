@@ -29,7 +29,7 @@ def main() -> None:
     print(f"* model: nq={env.nq} nv={env.nv} nu={env.nu} obs={env.num_obs} "
           f"({cfg.obs_mode}, {cfg.obs_history} steps) critic_obs={env.num_critic_obs} "
           f"actions={env.num_actions}")
-    assert env.num_critic_obs == 115 + 12, env.num_critic_obs   # sim state + randomized values
+    assert env.num_critic_obs == 115 + 13, env.num_critic_obs   # sim state + randomized values
     assert env.num_obs == HW_FRAME * cfg.obs_history, env.num_obs
     assert env.nu == N_TENDON
     assert len(env.ball_qadr) == N_BALL

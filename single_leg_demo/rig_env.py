@@ -15,7 +15,7 @@ Two observation groups (see ``single_leg_demo/STATES.md``):
 * ``critic`` (training only): the full 115-value simulator state, i.e.
   slider position/velocity, target velocity, phase, 13 ball-joint rotation
   vectors and velocities, tendon lengths, tendon forces, servo targets and
-  the previous action, plus 12 domain-randomized values (``dr_params``;
+  the previous action, plus 13 domain-randomized values (``dr_params``;
   ``critic_dr_params=False`` drops them).
 
 ``obs_mode="full"`` gives the actor the 115-value simulator state (legacy runs).
@@ -69,7 +69,8 @@ class RigConfig:
     # Observations (see STATES.md).
     obs_mode: str = "hardware"       # "hardware": actor sees sensors only; "full": legacy 115-d
     obs_history: int = 8             # hardware steps stacked for the actor
-    gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro
+    gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro (clipped at ±2)
+    acc_clip: float = 3.0            # g, rail IMU accelerometer clip
 
     # Reward weights.
     vel_weight: float = 2.0
@@ -108,6 +109,10 @@ class RigConfig:
     dr_rail_friction: tuple = (0.5, 2.0)     # × carriage frictionloss
     dr_rail_damping: tuple = (0.5, 2.0)      # × carriage damping
     dr_carriage_mass: tuple = (0.8, 1.2)     # × carriage mass
+    # Rail (hip) height offset in m, for build/assembly error.  Lopsided on
+    # purpose: above about +1 mm the straight leg no longer reaches the floor
+    # (unworkable for any policy); down to -10 mm the leg still drives the rail.
+    dr_rail_height: tuple = (-0.008, 0.0005)
     dr_segment_mass: tuple = (0.9, 1.1)      # × each leg body's mass
     dr_stiffness: tuple = (0.8, 1.2)         # × backbone (ball joint) stiffness
     dr_joint_damping: tuple = (0.7, 1.5)     # × ball joint damping
@@ -200,7 +205,7 @@ class SingleLegRigEnv:
         self.models = ([mujoco.MjModel.from_xml_path(cfg.model_path) for _ in range(n)]
                        if self.per_env_models else [m] * n)
         self.nom = {k: getattr(m, k).copy() for k in (
-            "geom_friction", "body_mass", "body_inertia", "dof_damping",
+            "geom_friction", "body_mass", "body_inertia", "body_pos", "dof_damping",
             "dof_frictionloss", "jnt_stiffness", "actuator_gainprm",
             "actuator_biasprm", "actuator_forcerange", "actuator_ctrlrange")}
         self.floor_geom = m.geom("floor").id
@@ -306,9 +311,12 @@ class SingleLegRigEnv:
                         + rng.normal(0.0, self.cfg["dr_pos_noise"] * s, N_TENDON))
             load = (load * self.load_scale[i]
                     + rng.normal(0.0, self.cfg["dr_load_noise"] * s, N_TENDON))
+        # physical limits, same as the hardware controller must apply: a sensor
+        # spike (impact, glitch) can never feed the policy an extreme value
         position = np.clip(position, 0.0, 1.0)
         load = np.clip(load, 0.0, 1.5)
-        gyro = gyro / self.cfg["gyro_scale"]
+        acc = np.clip(acc, -self.cfg["acc_clip"], self.cfg["acc_clip"])
+        gyro = np.clip(gyro / self.cfg["gyro_scale"], -2.0, 2.0)   # ±2 × gyro_scale rad/s
         return np.concatenate([
             np.array([
                 self.cmd[i] / max(self.cfg["obs_cmd_scale"], 1e-3),   # target velocity
@@ -337,12 +345,13 @@ class SingleLegRigEnv:
                        else full)
 
     def _obs_critic(self, i: int, full: np.ndarray | None = None) -> np.ndarray:
-        """Critic input: full sim state (115) + randomized values (12, optional)."""
+        """Critic input: full sim state (115) + randomized values (13, optional)."""
         full = self._obs_full(i) if full is None else full
         if not self.cfg["critic_dr_params"]:
             return full
         p = self.dr_params(i)
         p["delay_ms"] /= 20.0                    # roughly 0..1 like the others
+        p["rail_height_mm"] /= 10.0
         return np.concatenate([full, np.fromiter(p.values(), dtype=np.float64)])
 
     def _obs_td(self) -> TensorDict:
@@ -425,6 +434,7 @@ class SingleLegRigEnv:
             "friction", float(nom["geom_friction"][self.foot_geom, 0]))
         mi.dof_frictionloss[self.slide_dof] *= self._draw("rail_friction")
         mi.dof_damping[self.slide_dof] *= self._draw("rail_damping")
+        mi.body_pos[self.slider_body, 2] += self._draw("rail_height", 0.0)
         k = self._draw("carriage_mass")
         mi.body_mass[self.slider_body] *= k
         mi.body_inertia[self.slider_body] *= k
@@ -446,6 +456,8 @@ class SingleLegRigEnv:
             "friction": float(mi.geom_friction[self.foot_geom, 0]),
             "rail_friction": float(mi.dof_frictionloss[self.slide_dof] / nom["dof_frictionloss"][self.slide_dof]),
             "rail_damping": float(mi.dof_damping[self.slide_dof] / nom["dof_damping"][self.slide_dof]),
+            "rail_height_mm": float(1000 * (mi.body_pos[self.slider_body, 2]
+                                            - nom["body_pos"][self.slider_body, 2])),
             "carriage_mass": float(mi.body_mass[self.slider_body] / nom["body_mass"][self.slider_body]),
             "stiffness": float(mi.jnt_stiffness[self.ball_jnt[0]] / nom["jnt_stiffness"][self.ball_jnt[0]]),
             "joint_damping": float(mi.dof_damping[self.ball_dofs[0]] / nom["dof_damping"][self.ball_dofs[0]]),

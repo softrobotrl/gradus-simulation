@@ -26,7 +26,8 @@ from single_leg_demo.rig_env import RigConfig, SingleLegRigEnv
 
 # Everything nominal, so that with dr_enabled only sensor noise and pushes remain.
 NOMINAL = {
-    "friction": 1.0, "rail_friction": 1.0, "rail_damping": 1.0, "carriage_mass": 1.0,
+    "friction": 1.0, "rail_friction": 1.0, "rail_damping": 1.0, "rail_height": 0.0,
+    "carriage_mass": 1.0,
     "segment_mass": 1.0, "stiffness": 1.0, "joint_damping": 1.0, "servo_kp": 1.0,
     "servo_strength": 1.0, "servo_calib": 0.0, "battery": 1.0, "sag": 0.0, "delay": 0,
     "load_scale": 1.0,
@@ -37,6 +38,7 @@ SWEEP = (
     [("nominal", "-", {}, False)]
     + [("friction", v, {"friction": v}, False) for v in (0.4, 0.7, 1.0, 1.3)]
     + [("rail_friction", v, {"rail_friction": v}, False) for v in (0.5, 2.0, 3.0)]
+    + [("rail_height_mm", v, {"rail_height": v / 1000}, False) for v in (-10, -5, 0.5, 1.5)]
     + [("carriage_mass", v, {"carriage_mass": v}, False) for v in (0.8, 1.2)]
     + [("battery", v, {"battery": v}, False) for v in (0.7, 0.85, 1.0)]
     + [("sag", v, {"sag": v}, False) for v in (0.25, 0.5)]

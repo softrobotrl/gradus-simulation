@@ -30,6 +30,17 @@ class GeometryTests(unittest.TestCase):
             }
             self.assertEqual(dirs, {"front", "left", "back", "right"})
 
+    def test_clipped_model_bounds_normalized_inputs(self):
+        from tensordict import TensorDict
+        from single_leg_demo.models import OBS_CLIP, ClippedMLPModel
+        obs = TensorDict({"policy": torch.zeros(4, 3)}, batch_size=[4])
+        model = ClippedMLPModel(obs, {"actor": ["policy"]}, "actor", 2,
+                                hidden_dims=[8], obs_normalization=True)
+        model.obs_normalizer.update(torch.randn(200, 3) * 0.004)   # tiny sim std
+        latent = model.get_latent(TensorDict({"policy": torch.full((1, 3), 0.1)},
+                                             batch_size=[1]))
+        self.assertTrue(torch.all(latent.abs() <= OBS_CLIP))
+
     def test_quat_helpers(self):
         identity = np.array([1.0, 0.0, 0.0, 0.0])
         np.testing.assert_allclose(_quat_to_rotvec(identity), [0.0, 0.0, 0.0])
@@ -48,7 +59,7 @@ class RigEnvTests(unittest.TestCase):
         try:
             obs = env.reset()
             self.assertEqual(obs["policy"].shape, (2, HW_FRAME * cfg.obs_history))
-            self.assertEqual(obs["critic"].shape, (2, 115 + 12))
+            self.assertEqual(obs["critic"].shape, (2, 115 + 13))
             self.assertTrue(torch.isfinite(obs["policy"]).all())
             start = np.array([d.qpos[0] for d in env.datas])
             action = torch.zeros(2, env.num_actions)
@@ -178,6 +189,26 @@ class RigEnvTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_rail_height_randomized_within_range(self):
+        cfg = RigConfig(num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
+        env = SingleLegRigEnv(cfg)
+        try:
+            heights = [env.dr_params(i)["rail_height_mm"] for i in range(6)]
+            lo, hi = (1000 * v for v in cfg.dr_rail_height)
+            self.assertTrue(all(lo - 1e-9 <= h <= hi + 1e-9 for h in heights), heights)
+            self.assertGreater(len(set(np.round(heights, 6))), 1)
+            # a lower rail moves the hip (carriage) down by exactly that much
+            low = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                            dr_override={"rail_height": -0.005}))
+            try:
+                z = low.datas[0].xpos[low.slider_body, 2]
+                nominal = low.nom["body_pos"][low.slider_body, 2]
+                self.assertAlmostEqual(float(z), float(nominal) - 0.005, places=9)
+            finally:
+                low.close()
+        finally:
+            env.close()
+
     def test_delay_longer_than_one_step(self):
         # 30 ms = 15 substeps: nothing in step 1; in step 2 the first command
         # arrives after 5 substeps, so the servo moves for only 5 of 10
@@ -219,7 +250,7 @@ class RigEnvTests(unittest.TestCase):
             self.assertEqual(obs["policy"].shape, (1, 115))
             # the policy never sees the randomized values; the critic does
             torch.testing.assert_close(obs["policy"], obs["critic"][:, :115])
-            self.assertEqual(obs["critic"].shape, (1, 127))
+            self.assertEqual(obs["critic"].shape, (1, 128))
         finally:
             env.close()
 
