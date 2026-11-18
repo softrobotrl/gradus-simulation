@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from mujoco_to_mjcf.merge import _dir_of, _slug
+from onshape_to_mjcf.merge import _dir_of, _slug
 from single_leg_demo.rig_env import SingleLegRigEnv, RigConfig, _bend_angle, _quat_to_rotvec
 
 RIG_XML = Path("urdf/gradus/demo/rig.xml")

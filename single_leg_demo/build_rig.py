@@ -15,7 +15,7 @@ compressed (and the environment adds a small intentional bend at reset).
 
 Usage::
 
-    python -m mujoco_to_mjcf.build --out urdf/gradus/demo
+    python -m onshape_to_mjcf.build --out urdf/gradus/demo
     python -m single_leg_demo.build_rig
 """
 
@@ -53,7 +53,7 @@ def _copy_defaults(root_in: ET.Element, root_out: ET.Element) -> None:
 def build() -> None:
     if not LEG_XML.exists():
         raise SystemExit(
-            f"{LEG_XML} is missing; run `python -m mujoco_to_mjcf.build --out urdf/gradus/demo` first"
+            f"{LEG_XML} is missing; run `python -m onshape_to_mjcf.build --out urdf/gradus/demo` first"
         )
 
     # --- measure the generated leg ---------------------------------------- #

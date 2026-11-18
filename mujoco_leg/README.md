@@ -21,7 +21,7 @@ point.
 Generate the tip-up model (needs the Onshape credentials from `.env`):
 
 ```bash
-python -m mujoco_to_mjcf.build --out urdf/gradus/tracer --tip-up
+python -m onshape_to_mjcf.build --out urdf/gradus/tracer --tip-up
 ```
 
 This is the normal 14-station model with:

@@ -13,12 +13,12 @@ The clean ``Leg-Sim`` assembly is reused when it already exists; pass
 
 Examples::
 
-    python -m mujoco_to_mjcf.build
-    python -m mujoco_to_mjcf.build --rebuild
-    python -m mujoco_to_mjcf.build --assembly <element-id> --out /tmp/leg
+    python -m onshape_to_mjcf.build
+    python -m onshape_to_mjcf.build --rebuild
+    python -m onshape_to_mjcf.build --assembly <element-id> --out /tmp/leg
 
 Everything geometric (station order, hole radii/angles, link lengths) is read
-from Onshape; ``mujoco_to_mjcf/config.json`` only holds document IDs and material
+from Onshape; ``onshape_to_mjcf/config.json`` only holds document IDs and material
 defaults.
 """
 
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mujoco_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
+from onshape_to_mjcf.assembly import build, ensure, is_valid  # noqa: E402
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
@@ -190,7 +190,7 @@ def main() -> None:
 
         # --- merge ---------------------------------------------------------- #
         merge = [
-            sys.executable, "-m", "mujoco_to_mjcf.merge",
+            sys.executable, "-m", "onshape_to_mjcf.merge",
             "--xml", str(base_xml),
             "--out", str(out / "leg.xml"),
             "--document", did,

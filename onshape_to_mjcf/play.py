@@ -6,17 +6,17 @@ tension-only sinusoids, so the foot traces a circle.
 
 Interactive (real display)::
 
-    python -m mujoco_to_mjcf.play --xml urdf/gradus/sim/scene.xml
+    python -m onshape_to_mjcf.play --xml urdf/gradus/sim/scene.xml
 
 Headless GIF::
 
-    xvfb-run -a env MUJOCO_GL=glfw python -m mujoco_to_mjcf.play \
+    xvfb-run -a env MUJOCO_GL=glfw python -m onshape_to_mjcf.play \
         --xml urdf/gradus/sim/scene.xml \
         --record urdf/gradus/sim/leg_wave.gif --seconds 6
 
 Larger circle / more tip lift (uses more of the 200 N servo limit)::
 
-    MUJOCO_GL=egl python -m mujoco_to_mjcf.play \
+    MUJOCO_GL=egl python -m onshape_to_mjcf.play \
         --xml urdf/gradus/walk/scene.xml \
         --servo-kp 8000 --servo-kv 80 --outer-scale 1.0 \
         --record urdf/gradus/walk/leg_circle_lift.gif --seconds 6

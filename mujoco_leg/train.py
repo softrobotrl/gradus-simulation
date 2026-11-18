@@ -6,7 +6,7 @@ Run::
 
 The generated model must exist first::
 
-    python -m mujoco_to_mjcf.build --out urdf/gradus/tracer --tip-up
+    python -m onshape_to_mjcf.build --out urdf/gradus/tracer --tip-up
 """
 
 from __future__ import annotations

@@ -4,12 +4,12 @@ Monorepo for the Gradus tendon-driven robots.
 
 ## Projects
 
-### MuJoCo segmented leg (`mujoco_to_mjcf/`)
+### MuJoCo segmented leg (`onshape_to_mjcf/`)
 
 Onshape → `onshape-to-robot` → merged MuJoCo MJCF.
 
-- Entry: `python -m mujoco_to_mjcf.build`
-- Docs: [mujoco_to_mjcf/PIPELINE.md](mujoco_to_mjcf/PIPELINE.md)
+- Entry: `python -m onshape_to_mjcf.build`
+- Docs: [onshape_to_mjcf/PIPELINE.md](onshape_to_mjcf/PIPELINE.md)
 - Output: `urdf/gradus/sim/` (gitignored; regenerate on demand)
 
 ### Genesis single-leg (`genesis_leg/`)
@@ -26,7 +26,7 @@ The `Sim-Leg-Assembly` demo leg from Onshape, mounted on a one-dimensional
 linear rail. PPO drives the eight tendon servos so the carriage tracks a
 commanded velocity and pumps itself back and forth.
 
-- Build: `python -m mujoco_to_mjcf.build --out urdf/gradus/demo` then
+- Build: `python -m onshape_to_mjcf.build --out urdf/gradus/demo` then
   `python -m single_leg_demo.build_rig`
 - Train: `python -m single_leg_demo.train --num-envs 64 --iterations 1000`
 - Evaluate: `python -m single_leg_demo.evaluate --ckpt <checkpoint> --cmd-min 0.10 --cmd-max 0.10`
@@ -38,7 +38,7 @@ from the original leg: 4 inner + 4 outer spatial tendons (8 servos).
 
 ## Repository structure
 
-* `mujoco_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
+* `onshape_to_mjcf/` — MuJoCo Onshape → MJCF pipeline.
 * `single_leg_demo/` — demo leg sliding-rig env + PPO.
 * `walking_box/` — four-leg box quadruped env + PPO.
 * `genesis_leg/` — Genesis single-leg env + PPO.
@@ -55,7 +55,7 @@ from the original leg: 4 inner + 4 outer spatial tendons (8 servos).
 MuJoCo:
 
 ```bash
-python -m mujoco_to_mjcf.build
+python -m onshape_to_mjcf.build
 DISPLAY=:0 python -m mujoco.viewer --mjcf urdf/gradus/sim/scene.xml
 ```
 
@@ -71,7 +71,7 @@ Demo leg on the sliding rig:
 
 ```bash
 set -a && . ./.env && set +a
-python -m mujoco_to_mjcf.build --out urdf/gradus/demo
+python -m onshape_to_mjcf.build --out urdf/gradus/demo
 python -m single_leg_demo.build_rig
 python -m single_leg_demo.validate --num-envs 4
 python -m single_leg_demo.train --run-name rig_smoke --num-envs 16 --iterations 5

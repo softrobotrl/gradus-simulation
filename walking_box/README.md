@@ -29,7 +29,7 @@ forward walking only, PPO, no surrogate model.
 
 ```bash
 set -a && . ./.env && set +a
-python -m mujoco_to_mjcf.build --out urdf/gradus/walk   # tip-down leg + tip site
+python -m onshape_to_mjcf.build --out urdf/gradus/walk   # tip-down leg + tip site
 python -m walking_box.build_quadruped                   # 4 legs + trunk + feet
 python -m walking_box.build_phys                        # fast physics-only XML
 ```

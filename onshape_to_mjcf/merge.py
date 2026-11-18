@@ -21,13 +21,13 @@ from the nested occurrence transforms before adding the same sites/tendons.
 
 Usage::
 
-    python -m mujoco_to_mjcf.merge \
+    python -m onshape_to_mjcf.merge \
         --xml /tmp/leg/leg.xml \
         --assembly <assembly-element-id> \
         --partstudio <part-studio-element-id> \
         --out /tmp/leg/leg_merged.xml
 
-    python -m mujoco_to_mjcf.merge --nested \
+    python -m onshape_to_mjcf.merge --nested \
         --xml /tmp/demo/leg_base.xml \
         --assembly <Sim-Leg-Assembly-id> \
         --out urdf/gradus/demo/leg.xml
@@ -43,7 +43,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from mujoco_to_mjcf.onshape import Onshape
+from onshape_to_mjcf.onshape import Onshape
 
 DEFAULT_DOC = "e8da7c50681f40644f3812fb"
 DEFAULT_WS = "71bd24dd8d18a5e53f7ffb25"

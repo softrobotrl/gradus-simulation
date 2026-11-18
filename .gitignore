@@ -293,7 +293,7 @@ Testing/
 data/
 results/
 
-# generated MJCF — regenerate with `python -m mujoco_to_mjcf.build`
+# generated MJCF — regenerate with `python -m onshape_to_mjcf.build`
 urdf/gradus/sim/
 urdf/gradus/tracer/
 urdf/gradus/walk/

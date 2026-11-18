@@ -28,7 +28,7 @@ pumps itself back and forth.
 The assembly has 14 stations (hip mount + 6 thigh segments + 6 shin segments +
 foot adaptor).  Each station is a sub-assembly containing the two printed
 halves, and the top level has 13 ball mates.  `onshape-to-robot` therefore
-exports 14 bodies but no joints; `mujoco_to_mjcf/merge.py --nested` groups the
+exports 14 bodies but no joints; `onshape_to_mjcf/merge.py --nested` groups the
 bodies by occurrence, nests them into a chain, and adds the ball joints.
 
 Tendon routing is the same scheme as the original leg:
@@ -46,7 +46,7 @@ backbone bore and keeps the old direction-naming rule.
 
 ```bash
 set -a && . ./.env && set +a
-python -m mujoco_to_mjcf.build --out urdf/gradus/demo   # leg.xml + assets
+python -m onshape_to_mjcf.build --out urdf/gradus/demo   # leg.xml + assets
 python -m single_leg_demo.build_rig                     # rig.xml
 python -m single_leg_demo.validate --num-envs 4
 ```
