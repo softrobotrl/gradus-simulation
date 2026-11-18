@@ -4,13 +4,20 @@ The hip is bolted to a carriage with a single prismatic joint along +X.  The
 only ground contact is a small sphere at the foot, so the leg has to bend
 itself with the eight tendon servos to push the carriage back and forth.
 
-Observations are proprioceptive only (plus the commanded velocity):
+Two observation groups (see ``single_leg_demo/STATES.md``):
 
-* slider position and velocity (the linear-encoder state),
-* commanded velocity and the phase of the back-and-forth command,
-* 13 ball-joint rotation vectors and velocities,
-* normalised tendon lengths, actuator forces, servo targets,
-* the previous action.
+* ``policy`` (actor, runs on hardware) with ``obs_mode="hardware"``: only what
+  the real rig can know, 41 values per control step, last ``obs_history``
+  steps stacked oldest first:
+  target velocity (1), phase sin/cos (2), previous action (8), last servo
+  targets sent (8), servo positions (8), servo loads (8), rail IMU
+  accelerometer (3) and gyro (3).
+* ``critic`` (training only): the full 115-value simulator state, i.e.
+  slider position/velocity, target velocity, phase, 13 ball-joint rotation
+  vectors and velocities, tendon lengths, tendon forces, servo targets and
+  the previous action.
+
+``obs_mode="full"`` gives the actor the 115-value critic state (legacy runs).
 
 Actions are eight residuals on the tendon pull that holds the slightly bent
 reset pose.  ``pull = pull_bias + residual_scale * action`` in ``[0, 1]``.
@@ -31,6 +38,8 @@ from tensordict import TensorDict
 N_BALL = 13
 N_TENDON = 8
 FOOT_RADIUS = 0.015
+HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step
+GRAVITY = 9.81
 
 
 @dataclass
@@ -49,6 +58,11 @@ class RigConfig:
     cmd_period_jitter: float = 0.20
     cmd_resample: bool = True        # new random magnitude at every reversal
     obs_cmd_scale: float = 0.16      # fixed normaliser, independent of cmd_max
+
+    # Observations (see STATES.md).
+    obs_mode: str = "hardware"       # "hardware": actor sees sensors only; "full": legacy 115-d
+    obs_history: int = 8             # hardware steps stacked for the actor
+    gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro
 
     # Reward weights.
     vel_weight: float = 2.0
@@ -119,6 +133,15 @@ class SingleLegRigEnv:
         self.ball_dadr = np.array([int(j.dofadr[0]) for j in self.ball_joints])
         self.tip_id = m.site("tip").id
         self.qpos_straight = m.qpos0.copy()
+        if cfg.obs_mode not in ("hardware", "full"):
+            raise ValueError(f"obs_mode must be 'hardware' or 'full', got {cfg.obs_mode!r}")
+        try:
+            self.imu_acc_adr = int(m.sensor("imu_acc").adr[0])
+            self.imu_gyro_adr = int(m.sensor("imu_gyro").adr[0])
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{cfg.model_path} has no rail IMU sensors; "
+                "rebuild it with `python -m single_leg_demo.build_rig`") from exc
 
         self.datas = [mujoco.MjData(m) for _ in range(cfg.num_envs)]
         self.t = np.zeros(cfg.num_envs, dtype=np.int32)
@@ -130,9 +153,12 @@ class SingleLegRigEnv:
         self.pull_bias = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
         self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
 
-        obs0 = self._obs_one(0)
-        self.num_obs = int(obs0.shape[0])
+        self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), HW_FRAME))
+        self.num_critic_obs = int(self._obs_full(0).shape[0])
+        self.num_obs = (HW_FRAME * self.hist.shape[1] if cfg.obs_mode == "hardware"
+                        else self.num_critic_obs)
         self.obs = np.zeros((cfg.num_envs, self.num_obs), dtype=np.float32)
+        self.critic_obs = np.zeros((cfg.num_envs, self.num_critic_obs), dtype=np.float32)
 
         threads = max(1, min(cfg.num_threads or os.cpu_count() or 1, cfg.num_envs))
         self.num_threads = threads
@@ -159,7 +185,58 @@ class SingleLegRigEnv:
         period = max(self.cmd_period[i], 1e-3)
         return float((self.t[i] * self.dt / period) % 1.0)
 
-    def _obs_one(self, i: int) -> np.ndarray:
+    def _hw_frame(self, i: int) -> np.ndarray:
+        """One step of what the real rig can know (41 values, see STATES.md).
+
+        Called after the physics step, so ``d.ctrl`` is the servo target that
+        was sent and held during the last 20 ms, and ``prev_action`` is the
+        policy output that produced it.
+        """
+        d = self.datas[i]
+        phase = self._phase(i)
+        target = np.clip((self.l0 - d.ctrl) / self.stroke, 0.0, 1.0)
+        # Servo spool position: a taut tendon holds the spool short of its
+        # target; a slack tendon lets the servo reach the target.
+        taut = (self.l0 - d.ten_length) / self.stroke
+        position = np.clip(np.minimum(taut, target), 0.0, 1.0)
+        load = np.clip(-d.actuator_force / self.fmax, 0.0, 1.5)
+        acc = d.sensordata[self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
+        gyro = d.sensordata[self.imu_gyro_adr:self.imu_gyro_adr + 3] / self.cfg["gyro_scale"]
+        return np.concatenate([
+            np.array([
+                self.cmd[i] / max(self.cfg["obs_cmd_scale"], 1e-3),   # target velocity
+                math.sin(2 * math.pi * phase),
+                math.cos(2 * math.pi * phase),
+            ]),
+            self.prev_action[i],      # previous action (policy output)
+            target,                   # last servo targets sent
+            position,                 # servo encoder positions
+            load,                     # servo loads
+            acc,                      # rail IMU accelerometer, in g
+            gyro,                     # rail IMU gyro
+        ])
+
+    def _push_obs(self, i: int, fresh: bool = False) -> None:
+        """Advance env i's history and refresh its actor and critic observations."""
+        frame = self._hw_frame(i)
+        if fresh:
+            self.hist[i] = frame                        # reset: fill history with this step
+        else:
+            self.hist[i, :-1] = self.hist[i, 1:]        # oldest first, newest last
+            self.hist[i, -1] = frame
+        self.critic_obs[i] = self._obs_full(i)
+        self.obs[i] = (self.hist[i].reshape(-1) if self.cfg["obs_mode"] == "hardware"
+                       else self.critic_obs[i])
+
+    def _obs_td(self) -> TensorDict:
+        self.obs = np.nan_to_num(self.obs, nan=0.0, posinf=0.0, neginf=0.0)
+        self.critic_obs = np.nan_to_num(self.critic_obs, nan=0.0, posinf=0.0, neginf=0.0)
+        return TensorDict({"policy": torch.from_numpy(self.obs),
+                           "critic": torch.from_numpy(self.critic_obs)},
+                          batch_size=[self.num_envs])
+
+    def _obs_full(self, i: int) -> np.ndarray:
+        """Full 115-value simulator state (critic, or actor with obs_mode='full')."""
         d = self.datas[i]
         quat = np.stack([d.qpos[a:a + 4] for a in self.ball_qadr])
         rotvec = _quat_to_rotvec(quat).reshape(-1)
@@ -329,6 +406,7 @@ class SingleLegRigEnv:
         done = np.zeros(self.num_envs, dtype=bool)
         failed = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros_like(self.obs)
+        final_critic = np.zeros_like(self.critic_obs)
         keys = ("vx", "x", "cmd", "err", "foot_z", "foot_y", "bend",
                 "r_vel", "r_vel_l2", "r_prog", "r_rail", "r_foot", "r_lat",
                 "r_effort", "r_rate", "r_ten", "r_action_l2")
@@ -344,20 +422,26 @@ class SingleLegRigEnv:
             for k in keys:
                 log[k][i] = info[k]
             self.prev_action[i] = action[i]
-            self.obs[i] = self._obs_one(i)
+            self._push_obs(i)
             final_obs[i] = self.obs[i]
+            final_critic[i] = self.critic_obs[i]
 
         time_out = done & ~failed
         if auto_reset and done.any():
             for i in np.flatnonzero(done):
                 self._reset_one(i, randomize=True)
-                self.obs[i] = self._obs_one(i)
+                self._push_obs(i, fresh=True)
 
-        self.obs = np.nan_to_num(self.obs, nan=0.0, posinf=0.0, neginf=0.0)
+        obs = self._obs_td()
         extras = {
             "time_outs": torch.from_numpy(time_out.astype(np.float32)),
-            "final_observation": torch.from_numpy(
-                np.nan_to_num(final_obs, nan=0.0, posinf=0.0, neginf=0.0)),
+            # both groups: LegPPO bootstraps timeouts with the critic's view
+            "final_observation": TensorDict({
+                "policy": torch.from_numpy(
+                    np.nan_to_num(final_obs, nan=0.0, posinf=0.0, neginf=0.0)),
+                "critic": torch.from_numpy(
+                    np.nan_to_num(final_critic, nan=0.0, posinf=0.0, neginf=0.0)),
+            }, batch_size=[self.num_envs]),
             "log": {
                 "/reward_mean": float(reward.mean()),
                 "/vx_mean": float(log["vx"].mean()),
@@ -375,7 +459,7 @@ class SingleLegRigEnv:
             },
         }
         return (
-            TensorDict({"policy": torch.from_numpy(self.obs)}, batch_size=[self.num_envs]),
+            obs,
             torch.from_numpy(reward),
             torch.from_numpy(done.astype(np.float32)),
             extras,
@@ -385,12 +469,11 @@ class SingleLegRigEnv:
     def reset(self):
         for i in range(self.num_envs):
             self._reset_one(i, randomize=True)
-            self.obs[i] = self._obs_one(i)
-        self.obs = np.nan_to_num(self.obs, nan=0.0, posinf=0.0, neginf=0.0)
-        return TensorDict({"policy": torch.from_numpy(self.obs)}, batch_size=[self.num_envs])
+            self._push_obs(i, fresh=True)
+        return self._obs_td()
 
     def get_observations(self):
-        return TensorDict({"policy": torch.from_numpy(self.obs)}, batch_size=[self.num_envs])
+        return self._obs_td()
 
     @property
     def episode_length_buf(self):

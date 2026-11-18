@@ -13,7 +13,7 @@ import argparse
 import numpy as np
 import torch
 
-from single_leg_demo.rig_env import N_BALL, N_TENDON, RigConfig, SingleLegRigEnv
+from single_leg_demo.rig_env import HW_FRAME, N_BALL, N_TENDON, RigConfig, SingleLegRigEnv
 
 
 def main() -> None:
@@ -26,13 +26,22 @@ def main() -> None:
                     episode_steps=args.steps + 10, reset_noise=0.0)
     env = SingleLegRigEnv(cfg)
     print(f"* model: nq={env.nq} nv={env.nv} nu={env.nu} obs={env.num_obs} "
+          f"({cfg.obs_mode}, {cfg.obs_history} steps) critic_obs={env.num_critic_obs} "
           f"actions={env.num_actions}")
-    assert env.num_obs == 115, env.num_obs
+    assert env.num_critic_obs == 115, env.num_critic_obs
+    assert env.num_obs == HW_FRAME * cfg.obs_history, env.num_obs
     assert env.nu == N_TENDON
     assert len(env.ball_qadr) == N_BALL
 
     obs = env.reset()
     assert torch.isfinite(obs["policy"]).all()
+    assert torch.isfinite(obs["critic"]).all()
+    frame = env.hist[0, -1]
+    acc, gyro = frame[-6:-3], frame[-3:]
+    print(f"* rail IMU after reset: acc={np.round(acc, 3)} g  gyro={np.round(gyro, 3)}")
+    # Z reads gravity and Y is held by the rail; X is the real carriage
+    # acceleration (the leg is still settling 40 ms after reset).
+    assert abs(acc[2] - 1.0) < 0.05 and abs(acc[1]) < 0.05, acc
 
     # Zero action must hold the reset pose.
     x0 = np.array([d.qpos[0] for d in env.datas])

@@ -41,11 +41,16 @@ def main() -> None:
 
     # Use the same fixed command normaliser that the checkpoint was trained
     # with.  Older runs did not save obs_cmd_scale, so fall back to cmd_max.
+    # Runs from before the hardware observation have no obs_mode: they used
+    # the full 115-value state.
     obs_scale = 0.16
+    obs_mode, obs_history = "full", 1
     train_cfg = args.ckpt.parent / "config.json"
     if train_cfg.exists():
         saved = json.loads(train_cfg.read_text()).get("environment", {})
         obs_scale = float(saved.get("obs_cmd_scale", saved.get("cmd_max", obs_scale)))
+        obs_mode = saved.get("obs_mode", obs_mode)
+        obs_history = int(saved.get("obs_history", obs_history))
 
     cfg = RigConfig(
         num_envs=1,
@@ -57,6 +62,8 @@ def main() -> None:
         cmd_period_jitter=0.0,
         cmd_resample=False,
         obs_cmd_scale=obs_scale,
+        obs_mode=obs_mode,
+        obs_history=obs_history,
         reset_noise=0.0,
     )
     env = SingleLegRigEnv(cfg)
@@ -69,7 +76,7 @@ def main() -> None:
     env.cmd_sign0[0] = 1.0
     env.cmd_period[0] = args.cmd_period
     env._set_cmd(0)
-    env.obs[0] = env._obs_one(0)
+    env._push_obs(0, fresh=True)
     obs = env.get_observations()
 
     qpos, qvel, xs, vxs, cmds, foot_zs, bends = [], [], [], [], [], [], []

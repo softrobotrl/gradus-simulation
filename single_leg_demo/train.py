@@ -58,7 +58,8 @@ def training_config(name: str, steps: int) -> dict:
             "activation": "elu",
             "obs_normalization": True,
         },
-        "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
+        # actor: hardware-measurable state; critic: full simulator state (training only)
+        "obs_groups": {"actor": ["policy"], "critic": ["critic"]},
         "num_steps_per_env": steps,
         "save_interval": 50,
         "run_name": name,
@@ -95,6 +96,10 @@ def main() -> None:
     p.add_argument("--action-l2-weight", type=float, default=None)
     p.add_argument("--reset-noise", type=float, default=None)
     p.add_argument("--bend-limit", type=float, default=None)
+    p.add_argument("--obs-mode", choices=("hardware", "full"), default=None,
+                   help="actor observation: hardware sensors (default) or full sim state")
+    p.add_argument("--obs-history", type=int, default=None,
+                   help="hardware steps stacked for the actor (default 8)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -111,7 +116,8 @@ def main() -> None:
     )
     for key in ("residual_scale", "cmd_min", "cmd_max", "cmd_period",
                 "vel_weight", "vel_sigma", "vel_l2_weight", "progress_weight",
-                "action_l2_weight", "reset_noise", "bend_limit"):
+                "action_l2_weight", "reset_noise", "bend_limit",
+                "obs_mode", "obs_history"):
         value = getattr(args, key)
         if value is not None:
             cfg.__dict__[key] = value
@@ -132,6 +138,7 @@ def main() -> None:
     }
     (run_dir / "config.json").write_text(json.dumps(settings, indent=2))
     print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} "
+          f"({cfg.obs_mode}) critic_obs={env.num_critic_obs} "
           f"threads={env.num_threads} device={args.device}")
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)

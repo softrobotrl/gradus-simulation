@@ -60,19 +60,25 @@ every reset.
 
 ## Observations and actions
 
-Observations are proprioceptive (plus the commanded velocity), 115 values:
+The policy only sees what the real rig can know. Full definitions, units and
+time order are in [STATES.md](STATES.md). Per 20 ms step, 41 values:
 
-| group | count |
-|---|---|
-| slider position / velocity, commanded velocity, command phase (sin, cos) | 5 |
-| 13 ball-joint rotation vectors | 39 |
-| 13 ball-joint velocities (×0.05) | 39 |
-| normalised tendon lengths | 8 |
-| normalised tendon forces | 8 |
-| current servo pull targets | 8 |
-| previous action | 8 |
+| group | count | source on hardware |
+|---|---|---|
+| target velocity, phase (sin, cos) | 3 | our controller / clock |
+| previous action | 8 | last policy output |
+| last servo targets | 8 | what our controller sent |
+| servo positions | 8 | servo encoders |
+| servo loads | 8 | servo load reading |
+| rail IMU accelerometer + gyro | 6 | IMU on the carriage |
 
-The command alternates sign every `cmd_period` seconds (2 s, ±20 % jitter).
+The last 8 steps are stacked, so the policy input is 328 values.  The critic
+(training only) gets the full 115-value simulator state: slider position and
+velocity, target velocity, phase, 13 ball-joint rotations and velocities,
+tendon lengths and forces, servo targets and the previous action.  Use
+`--obs-mode full` to give the policy that state instead (old behaviour).
+
+The target velocity ("command", `cmd` in code) alternates sign every `cmd_period` seconds (2 s, ±20 % jitter).
 Its magnitude is resampled in `[cmd_min, cmd_max]` at **every reversal**, so a
 single fixed-amplitude pump cannot satisfy the reward; the policy has to read
 the commanded magnitude.  The command phase lets it anticipate the sign flip,

@@ -7,7 +7,8 @@ down, 8 tendon servos) and writes ``urdf/gradus/demo/rig.xml``:
 * the hip is rigidly bolted to a carriage,
 * the carriage has a single prismatic joint along +X (a linear rail),
 * the only contact geom is a small sphere at the ``tip`` site,
-* the leg mesh collisions are disabled, so the foot is the only contact.
+* the leg mesh collisions are disabled, so the foot is the only contact,
+* an ``imu`` site on the carriage carries the rail IMU (``imu_acc``, ``imu_gyro``).
 
 The rail height is derived from the actual generated leg: the hip sits a few
 millimetres lower than the straight-leg length, so the leg starts slightly
@@ -139,6 +140,10 @@ def build() -> None:
         "mass": str(SLIDER_MASS), "contype": "0", "conaffinity": "0",
         "rgba": "0.55 0.55 0.60 1",
     })
+    # rail IMU: mounted on top of the carriage, axes aligned with the world
+    ET.SubElement(slider, "site", {
+        "name": "imu", "pos": "0 0 0.022", "size": "0.006", "rgba": "1 0.5 0 1",
+    })
     slider.append(copy.deepcopy(hip))
 
     # --- foot sphere and collision filtering ------------------------------- #
@@ -165,6 +170,11 @@ def build() -> None:
     # --- tendons and actuators --------------------------------------------- #
     root.append(copy.deepcopy(leg_tendon))
     root.append(copy.deepcopy(leg_actuator))
+
+    # --- rail IMU sensors (accelerometer reads +g on Z at rest) ------------- #
+    sensor = ET.SubElement(root, "sensor")
+    ET.SubElement(sensor, "accelerometer", {"name": "imu_acc", "site": "imu"})
+    ET.SubElement(sensor, "gyro", {"name": "imu_gyro", "site": "imu"})
 
     ET.indent(root, space="  ")
     OUT_XML.parent.mkdir(parents=True, exist_ok=True)

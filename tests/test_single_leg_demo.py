@@ -8,7 +8,8 @@ import numpy as np
 import torch
 
 from mujoco_to_mjcf.merge import _dir_of, _slug
-from single_leg_demo.rig_env import SingleLegRigEnv, RigConfig, _bend_angle, _quat_to_rotvec
+from single_leg_demo.rig_env import (
+    HW_FRAME, N_TENDON, SingleLegRigEnv, RigConfig, _bend_angle, _quat_to_rotvec)
 
 RIG_XML = Path("urdf/gradus/demo/rig.xml")
 
@@ -46,7 +47,8 @@ class RigEnvTests(unittest.TestCase):
         env = SingleLegRigEnv(cfg)
         try:
             obs = env.reset()
-            self.assertEqual(obs["policy"].shape, (2, env.num_obs))
+            self.assertEqual(obs["policy"].shape, (2, HW_FRAME * cfg.obs_history))
+            self.assertEqual(obs["critic"].shape, (2, 115))
             self.assertTrue(torch.isfinite(obs["policy"]).all())
             start = np.array([d.qpos[0] for d in env.datas])
             action = torch.zeros(2, env.num_actions)
@@ -57,6 +59,50 @@ class RigEnvTests(unittest.TestCase):
             self.assertTrue(torch.isfinite(reward).all())
             dx = np.array([d.qpos[0] for d in env.datas]) - start
             self.assertTrue(np.all(dx > 0.0), dx)
+        finally:
+            env.close()
+
+    def test_hardware_frame_layout_and_history(self):
+        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
+                        cmd_min=0.1, cmd_max=0.1, obs_history=3)
+        env = SingleLegRigEnv(cfg)
+        try:
+            env.reset()
+            hist = env.hist[0]
+            # fresh reset fills every history slot with the same step
+            np.testing.assert_allclose(hist[0], hist[-1])
+            frame = hist[-1]
+            n = N_TENDON
+            prev_action = frame[3:3 + n]
+            target = frame[3 + n:3 + 2 * n]
+            position = frame[3 + 2 * n:3 + 3 * n]
+            load = frame[3 + 3 * n:3 + 4 * n]
+            acc = frame[3 + 4 * n:3 + 4 * n + 3]
+            np.testing.assert_allclose(prev_action, 0.0)
+            self.assertTrue(np.all((target >= 0) & (target <= 1)))
+            # the spool cannot be pulled further than it was told to go
+            self.assertTrue(np.all(position <= target + 1e-9))
+            self.assertTrue(np.all(load >= 0))
+            self.assertAlmostEqual(float(acc[2]), 1.0, delta=0.05)
+
+            action = torch.full((1, env.num_actions), 0.5)
+            obs, *_ = env.step(action, auto_reset=False)
+            hist = env.hist[0]
+            # history shifts: newest step holds the action just applied
+            np.testing.assert_allclose(hist[-1, 3:3 + n], 0.5)
+            np.testing.assert_allclose(hist[-2, 3:3 + n], 0.0)
+            np.testing.assert_allclose(obs["policy"][0].numpy(), hist.reshape(-1), rtol=1e-6)
+        finally:
+            env.close()
+
+    def test_full_mode_matches_legacy_size(self):
+        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
+                        obs_mode="full")
+        env = SingleLegRigEnv(cfg)
+        try:
+            obs = env.reset()
+            self.assertEqual(obs["policy"].shape, (1, 115))
+            torch.testing.assert_close(obs["policy"], obs["critic"])
         finally:
             env.close()
 
