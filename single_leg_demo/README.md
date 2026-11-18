@@ -84,16 +84,18 @@ single fixed-amplitude pump cannot satisfy the reward; the policy has to read
 the commanded magnitude.  The command phase lets it anticipate the sign flip,
 but not the next magnitude.
 
-The eight actions are residuals on the tendon pull that holds the reset pose:
+The eight actions are residuals on a fixed tendon pull:
 
 ```
 pull = clip(pull_bias + residual_scale * action, 0, 1)
 ctrl = l0 - stroke * pull
 ```
 
-The servo target is low-pass filtered (50/50) and clamped to the actuator
-range.  `pull_bias` is measured at reset from the bent pose, so zero action
-holds the leg instead of yanking it straight.
+`pull_bias` is a one-off calibration: every tendon just taut with the leg
+straight, which is pull 0 for this model.  The sent servo target is low-pass
+filtered (50/50) and clamped to the actuator range.  The simulated servo then
+moves toward it at no more than `servo_speed` (0.07 m/s at the spool, an
+assumed hobby-servo 0.15 s / 60°, until the real servo is known).
 
 ## Reward
 

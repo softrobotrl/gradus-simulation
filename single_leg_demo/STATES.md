@@ -34,6 +34,10 @@ new target  = pull_bias + 0.6 × output                        (clipped to 0..1)
 sent target = 0.5 × previous sent target + 0.5 × new target   (smoothing)
 ```
 
+`pull_bias` is fixed: every tendon just taut with the leg straight (pull 0 for this model), a one-off
+calibration on hardware. The servo then moves toward the sent target at its top speed
+(`servo_speed`, assumed 0.07 m/s at the spool), so it can lag behind the target.
+
 ## Time order: what is input and what is output
 
 Nothing is an input and an output at the same moment. The output of one step comes back as an
@@ -92,8 +96,8 @@ and old checkpoints. `evaluate.py` reads the mode from each run's `config.json`.
 | target velocity | `env.cmd[i] / obs_cmd_scale` (`cmd` in code = target velocity) |
 | phase | `env._phase(i)` |
 | previous action | `env.prev_action[i]` |
-| last servo targets | `(l0 - d.ctrl) / stroke` |
-| servo positions | `min(tendon pull, target)`: a taut tendon holds the spool short of its target, a slack tendon lets it reach the target; tendon pull = `(l0 - d.ten_length) / stroke` |
+| last servo targets | `(l0 - env.servo_cmd[i]) / stroke` (what was sent) |
+| servo positions | `min(tendon pull, setpoint)`: the setpoint `d.ctrl` chases the sent target at `servo_speed`; a taut tendon holds the spool short of it, a slack tendon lets it get there; tendon pull = `(l0 - d.ten_length) / stroke` |
 | servo loads | `-d.actuator_force / fmax` |
 | rail IMU | MuJoCo `accelerometer` (`imu_acc`) and `gyro` (`imu_gyro`) on the `imu` site on top of the carriage, added by `build_rig.py` |
 
@@ -101,7 +105,7 @@ and old checkpoints. `evaluate.py` reads the mode from each run's `config.json`.
 
 - **Sensor noise:** none yet. IMU noise and bias will use typical MPU6050-class values until the chip
   is chosen; servo position quantisation and load noise should be added too.
-- **`pull_bias`:** still computed at each reset from simulated tendon lengths, which hardware cannot
-  measure. It needs to become a fixed, calibrated value.
+- **Servo speed:** `servo_speed` is an assumed hobby-servo value; replace it with the datasheet
+  speed once the servo is known.
 - **Load scaling:** the real servo's load reading must be calibrated to the same 0..1 fraction of
   max force used here.

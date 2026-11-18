@@ -95,6 +95,34 @@ class RigEnvTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_servo_speed_limit(self):
+        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0)
+        env = SingleLegRigEnv(cfg)
+        try:
+            env.reset()
+            before = env.datas[0].ctrl.copy()
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            moved = np.abs(env.datas[0].ctrl - before)
+            limit = cfg.servo_speed * env.m.opt.timestep * cfg.n_substeps
+            self.assertTrue(np.all(moved <= limit + 1e-9), (moved, limit))
+            self.assertTrue(np.all(moved > 0.5 * limit))      # it does move at top speed
+            # the policy sees the target that was sent, not the lagging servo
+            sent = (env.l0 - env.servo_cmd[0]) / env.stroke
+            np.testing.assert_allclose(env.hist[0, -1, 3 + N_TENDON:3 + 2 * N_TENDON],
+                                       np.clip(sent, 0, 1))
+        finally:
+            env.close()
+
+    def test_pull_bias_is_fixed(self):
+        cfg = RigConfig(num_envs=3, num_threads=1, episode_steps=20)
+        env = SingleLegRigEnv(cfg)
+        try:
+            for _ in range(2):
+                env.reset()
+                np.testing.assert_allclose(env.pull_bias, np.tile(env.pull_bias_nominal, (3, 1)))
+        finally:
+            env.close()
+
     def test_full_mode_matches_legacy_size(self):
         cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
                         obs_mode="full")

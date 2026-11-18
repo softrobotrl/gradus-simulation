@@ -44,13 +44,17 @@ def main() -> None:
     # Runs from before the hardware observation have no obs_mode: they used
     # the full 115-value state.
     obs_scale = 0.16
+    # Runs from before the servo speed limit / fixed pull_bias used neither.
     obs_mode, obs_history = "full", 1
+    servo_speed, fixed_pull_bias = 0.0, False
     train_cfg = args.ckpt.parent / "config.json"
     if train_cfg.exists():
         saved = json.loads(train_cfg.read_text()).get("environment", {})
         obs_scale = float(saved.get("obs_cmd_scale", saved.get("cmd_max", obs_scale)))
         obs_mode = saved.get("obs_mode", obs_mode)
         obs_history = int(saved.get("obs_history", obs_history))
+        servo_speed = float(saved.get("servo_speed", servo_speed))
+        fixed_pull_bias = bool(saved.get("fixed_pull_bias", fixed_pull_bias))
 
     cfg = RigConfig(
         num_envs=1,
@@ -64,6 +68,8 @@ def main() -> None:
         obs_cmd_scale=obs_scale,
         obs_mode=obs_mode,
         obs_history=obs_history,
+        servo_speed=servo_speed,
+        fixed_pull_bias=fixed_pull_bias,
         reset_noise=0.0,
     )
     env = SingleLegRigEnv(cfg)

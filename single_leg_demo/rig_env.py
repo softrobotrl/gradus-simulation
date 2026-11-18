@@ -19,8 +19,13 @@ Two observation groups (see ``single_leg_demo/STATES.md``):
 
 ``obs_mode="full"`` gives the actor the 115-value critic state (legacy runs).
 
-Actions are eight residuals on the tendon pull that holds the slightly bent
-reset pose.  ``pull = pull_bias + residual_scale * action`` in ``[0, 1]``.
+Actions are eight residuals on a fixed tendon pull ``pull_bias`` (each tendon
+just taut with the leg straight, a one-off calibration on hardware):
+``pull = pull_bias + residual_scale * action`` in ``[0, 1]``.
+
+Servo model: ``servo_cmd`` is the target our controller sends (smoothed
+50/50 each step).  The simulated servo's setpoint ``d.ctrl`` moves toward it
+at no more than ``servo_speed`` (spool m/s), like a real servo's top speed.
 """
 
 from __future__ import annotations
@@ -86,6 +91,12 @@ class RigConfig:
     reset_settle: int = 20            # physics steps after the reset pose
 
     residual_scale: float = 0.6
+
+    # Servo model.  Assumed generic hobby servo (0.15 s / 60 deg, 10 mm spool)
+    # until the real servo's datasheet is known; <= 0 disables the limit.
+    servo_speed: float = 0.07         # m/s of tendon at the spool
+    fixed_pull_bias: bool = True      # False: legacy per-reset bias from sim tendon lengths
+
     num_threads: int | None = None
     seed: int = 0
 
@@ -150,7 +161,17 @@ class SingleLegRigEnv:
         self.cmd_sign0 = np.ones(cfg.num_envs, dtype=np.float64)
         self.cmd_period = np.full(cfg.num_envs, cfg.cmd_period, dtype=np.float64)
         self.cmd_segment = np.zeros(cfg.num_envs, dtype=np.int32)
-        self.pull_bias = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+        # Fixed calibration: tendon pull with every tendon just taut and the
+        # leg straight.  Hardware can reproduce this at startup.
+        d_cal = mujoco.MjData(m)
+        d_cal.qpos[:] = self.qpos_straight
+        mujoco.mj_forward(m, d_cal)
+        self.pull_bias_nominal = np.clip((self.l0 - d_cal.ten_length) / self.stroke, 0.0, 1.0)
+        self.pull_bias = np.tile(self.pull_bias_nominal, (cfg.num_envs, 1))
+        # What our controller sent (tendon-length units); d.ctrl is where the
+        # simulated servo actually is heading, rate-limited toward this.
+        self.servo_cmd = np.tile(self.l0 - self.stroke * self.pull_bias_nominal,
+                                 (cfg.num_envs, 1))
         self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
 
         self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), HW_FRAME))
@@ -188,17 +209,19 @@ class SingleLegRigEnv:
     def _hw_frame(self, i: int) -> np.ndarray:
         """One step of what the real rig can know (41 values, see STATES.md).
 
-        Called after the physics step, so ``d.ctrl`` is the servo target that
-        was sent and held during the last 20 ms, and ``prev_action`` is the
-        policy output that produced it.
+        Called after the physics step, so ``servo_cmd`` is the servo target
+        that was sent for the last 20 ms, and ``prev_action`` is the policy
+        output that produced it.
         """
         d = self.datas[i]
         phase = self._phase(i)
-        target = np.clip((self.l0 - d.ctrl) / self.stroke, 0.0, 1.0)
-        # Servo spool position: a taut tendon holds the spool short of its
-        # target; a slack tendon lets the servo reach the target.
+        target = np.clip((self.l0 - self.servo_cmd[i]) / self.stroke, 0.0, 1.0)
+        # Servo spool position: the servo heads for its rate-limited setpoint
+        # (d.ctrl); a taut tendon holds the spool short of it, a slack tendon
+        # lets it get there.
+        setpoint = (self.l0 - d.ctrl) / self.stroke
         taut = (self.l0 - d.ten_length) / self.stroke
-        position = np.clip(np.minimum(taut, target), 0.0, 1.0)
+        position = np.clip(np.minimum(taut, setpoint), 0.0, 1.0)
         load = np.clip(-d.actuator_force / self.fmax, 0.0, 1.5)
         acc = d.sensordata[self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
         gyro = d.sensordata[self.imu_gyro_adr:self.imu_gyro_adr + 3] / self.cfg["gyro_scale"]
@@ -301,16 +324,22 @@ class SingleLegRigEnv:
         d.qpos[self.slide_qadr] = -tip[0] + self.rng.uniform(-0.03, 0.03) * noise
         d.qvel[0] = self.rng.uniform(-0.02, 0.02) * noise
 
-        d.ctrl[:] = self.l0
-        mujoco.mj_forward(self.m, d)
-        pull = np.clip((self.l0 - d.ten_length) / self.stroke, 0.0, 1.0)
+        if self.cfg["fixed_pull_bias"]:
+            pull = self.pull_bias_nominal
+        else:  # legacy: pull that holds this episode's bent pose (sim-only)
+            d.ctrl[:] = self.l0
+            mujoco.mj_forward(self.m, d)
+            pull = np.clip((self.l0 - d.ten_length) / self.stroke, 0.0, 1.0)
         self.pull_bias[i] = pull
-        d.ctrl[:] = self.l0 - self.stroke * pull
+        hold = self.l0 - self.stroke * pull
+        self.servo_cmd[i] = hold
+        d.ctrl[:] = hold
+        mujoco.mj_forward(self.m, d)
 
         if self.cfg["reset_settle"] > 0:
             for _ in range(int(self.cfg["reset_settle"])):
                 mujoco.mj_step(self.m, d)
-            d.ctrl[:] = self.l0 - self.stroke * pull
+            d.ctrl[:] = hold
 
         self.t[i] = 0
         self.prev_action[i] = 0.0
@@ -381,11 +410,14 @@ class SingleLegRigEnv:
         return float(reward), bool(failed), info
 
     # ------------------------------------------------------------------ #
-    def _phys_chunk(self, idxs: np.ndarray, ctrl: np.ndarray) -> None:
+    def _phys_chunk(self, idxs: np.ndarray, cmd: np.ndarray) -> None:
+        speed = self.cfg["servo_speed"]
+        max_dl = speed * self.m.opt.timestep if speed > 0 else np.inf
         for i in idxs:
             d = self.datas[i]
-            d.ctrl[:] = ctrl[i]
             for _ in range(self.n_substeps):
+                # servo setpoint moves toward the command at its top speed
+                d.ctrl[:] += np.clip(cmd[i] - d.ctrl, -max_dl, max_dl)
                 mujoco.mj_step(self.m, d)
 
     def step(self, actions, auto_reset: bool = True):
@@ -398,9 +430,11 @@ class SingleLegRigEnv:
         target_pull = np.clip(
             self.pull_bias + self.cfg["residual_scale"] * action, 0.0, 1.0)
         target_ctrl = self.l0[None, :] - self.stroke[None, :] * target_pull
-        ctrl_now = np.array([d.ctrl for d in self.datas])
-        ctrl = np.clip(0.5 * ctrl_now + 0.5 * target_ctrl, self.ctrl_lo, self.l0)
-        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, ctrl), self._chunks))
+        # controller-side smoothing of the sent target, then the servos chase it
+        self.servo_cmd = np.clip(0.5 * self.servo_cmd + 0.5 * target_ctrl,
+                                 self.ctrl_lo, self.l0)
+        cmd = self.servo_cmd.copy()
+        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd), self._chunks))
 
         reward = np.zeros(self.num_envs, dtype=np.float32)
         done = np.zeros(self.num_envs, dtype=bool)
