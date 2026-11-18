@@ -1,6 +1,6 @@
 # Single-leg rig: domain randomization
 
-Status: steps 1–5 **done**; steps 6–7 planned.
+Status: steps 1–6 **done**; step 7 planned.
 
 Turn it on with `python -m single_leg_demo.train --dr` (`RigConfig(dr_enabled=True)`); it is off by
 default. `python -m single_leg_demo.validate --dr` prints each env's drawn values.
@@ -78,7 +78,11 @@ This needs a servo speed limit, which the sim does not have yet (see step 1 belo
 4. ✅ Voltage sag, control delay and pushes in the step loop; sensor noise in `_hw_frame`.
    About 25 % slower simulation with randomization on.
 5. ✅ Randomized values added to the critic input (127 values); ramp-up in `train.py` (`--dr-ramp`).
-6. Robustness sweep in `evaluate.py`: tracking error vs friction, battery level and delay.
+6. ✅ Robustness sweep: `python -m single_leg_demo.robustness --ckpt <model.pt>`. Changes one
+   parameter at a time (friction, rail friction, carriage mass, battery, sag, delay up to 30 ms,
+   servo gain), then noise + pushes, then everything randomized; some values go past the training
+   ranges. Prints tracking error, failure rate and survival time, and writes a CSV next to the
+   checkpoint.
 7. Train with and without randomization and compare on the sweep.
 
 ## Assumptions

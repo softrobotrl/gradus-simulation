@@ -178,6 +178,23 @@ class RigEnvTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_delay_longer_than_one_step(self):
+        # 30 ms = 15 substeps: nothing in step 1; in step 2 the first command
+        # arrives after 5 substeps, so the servo moves for only 5 of 10
+        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+                                        reset_noise=0.0, dr_override={"delay": 15}))
+        try:
+            env.reset()
+            before = env.datas[0].ctrl.copy()
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            np.testing.assert_allclose(env.datas[0].ctrl, before, atol=1e-12)
+            env.step(torch.ones(1, env.num_actions), auto_reset=False)
+            moved = np.abs(env.datas[0].ctrl - before).max()
+            per_substep = env.cfg["servo_speed"] * env.m.opt.timestep
+            self.assertAlmostEqual(moved, 5 * per_substep, places=9)
+        finally:
+            env.close()
+
     def test_voltage_sag_weakens_and_slows_servos(self):
         env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
                                         reset_noise=0.0,

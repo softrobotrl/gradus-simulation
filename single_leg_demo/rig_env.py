@@ -46,6 +46,7 @@ N_TENDON = 8
 FOOT_RADIUS = 0.015
 HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step
 GRAVITY = 9.81
+CMD_BUF = 3          # sent commands kept for the control delay (max 2 steps = 40 ms)
 
 
 @dataclass
@@ -240,7 +241,8 @@ class SingleLegRigEnv:
         # simulated servo actually is heading, rate-limited toward this.
         self.servo_cmd = np.tile(self.l0 - self.stroke * self.pull_bias_nominal,
                                  (cfg.num_envs, 1))
-        self.servo_cmd_prev = self.servo_cmd.copy()   # previous step's command (delay)
+        # sent commands: [this step, 1 step ago, 2 steps ago], for the control delay
+        self.cmd_buf = np.repeat(self.servo_cmd[:, None, :], CMD_BUF, axis=1)
         self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
 
         self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), HW_FRAME))
@@ -506,7 +508,7 @@ class SingleLegRigEnv:
         self.pull_bias[i] = pull
         hold = self.l0 - self.stroke * pull          # what the controller sends
         self.servo_cmd[i] = hold
-        self.servo_cmd_prev[i] = hold
+        self.cmd_buf[i] = hold
         d.ctrl[:] = hold + self.calib[i]             # where the servo physically goes
         mujoco.mj_forward(mi, d)
 
@@ -584,15 +586,15 @@ class SingleLegRigEnv:
         return float(reward), bool(failed), info
 
     # ------------------------------------------------------------------ #
-    def _phys_chunk(self, idxs: np.ndarray, cmd: np.ndarray, cmd_prev: np.ndarray,
-                    push: np.ndarray) -> None:
+    def _phys_chunk(self, idxs: np.ndarray, cmd_buf: np.ndarray, push: np.ndarray) -> None:
         speed = self.cfg["servo_speed"]
         step_dl = speed * self.m.opt.timestep if speed > 0 else np.inf
         fmax_nom = self.nom["actuator_forcerange"][:, 0]          # negative (pull)
         for i in idxs:
             d, mi = self.datas[i], self.models[i]
             # physical setpoints: what was commanded, shifted by calibration error
-            new, old = cmd[i] + self.calib[i], cmd_prev[i] + self.calib[i]
+            sent = cmd_buf[i] + self.calib[i]        # [this step, 1 ago, 2 ago]
+            delay = int(self.delay[i])
             d.xfrc_applied[self.slider_body, 0] = push[i]
             for k in range(self.n_substeps):
                 volt = 1.0
@@ -602,7 +604,10 @@ class SingleLegRigEnv:
                     load = float(np.mean(np.clip(-d.actuator_force / self.fmax, 0.0, 1.0)))
                     volt = self.battery[i] * (1.0 - self.sag[i] * load)
                     mi.actuator_forcerange[:, 0] = fmax_nom * self.strength[i] * volt
-                target = old if k < self.delay[i] else new            # control delay
+                # control delay: a command sent at step t reaches the servo `delay`
+                # substeps later, so early substeps still chase older commands
+                lag = 0 if k >= delay else (delay - k + self.n_substeps - 1) // self.n_substeps
+                target = sent[min(lag, CMD_BUF - 1)]
                 max_dl = step_dl * volt
                 d.ctrl[:] += np.clip(target - d.ctrl, -max_dl, max_dl)  # top speed
                 mujoco.mj_step(mi, d)
@@ -619,10 +624,11 @@ class SingleLegRigEnv:
             self.pull_bias + self.cfg["residual_scale"] * action, 0.0, 1.0)
         target_ctrl = self.l0[None, :] - self.stroke[None, :] * target_pull
         # controller-side smoothing of the sent target, then the servos chase it
-        self.servo_cmd_prev = self.servo_cmd.copy()
         self.servo_cmd = np.clip(0.5 * self.servo_cmd + 0.5 * target_ctrl,
                                  self.ctrl_lo, self.l0)
-        cmd, cmd_prev = self.servo_cmd.copy(), self.servo_cmd_prev.copy()
+        self.cmd_buf = np.roll(self.cmd_buf, 1, axis=1)
+        self.cmd_buf[:, 0] = self.servo_cmd
+        cmd_buf = self.cmd_buf.copy()
 
         # random carriage pushes (decided here so the RNG stays on this thread)
         if self.cfg["dr_enabled"]:
@@ -635,7 +641,7 @@ class SingleLegRigEnv:
         push = np.where(self.push_left > 0, self.push_force, 0.0)
         self.push_left = np.maximum(self.push_left - 1, 0)
 
-        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd, cmd_prev, push),
+        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd_buf, push),
                             self._chunks))
 
         reward = np.zeros(self.num_envs, dtype=np.float32)

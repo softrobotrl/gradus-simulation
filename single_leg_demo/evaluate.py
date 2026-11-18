@@ -22,6 +22,36 @@ from single_leg_demo.rig_env import FOOT_RADIUS, RigConfig, SingleLegRigEnv
 from single_leg_demo.train import training_config
 
 
+def saved_env_settings(ckpt: Path) -> dict:
+    """RigConfig settings a checkpoint was trained with, from its run's config.json.
+
+    Older runs miss newer keys, so each falls back to how those runs worked:
+    no obs_cmd_scale -> cmd_max; no obs_mode -> full 115-value state; no servo
+    speed limit or fixed pull_bias; no randomized values in the critic.
+    """
+    settings = {
+        "obs_cmd_scale": 0.16, "obs_mode": "full", "obs_history": 1,
+        "servo_speed": 0.0, "fixed_pull_bias": False, "critic_dr_params": False,
+    }
+    train_cfg = ckpt.parent / "config.json"
+    if train_cfg.exists():
+        saved = json.loads(train_cfg.read_text()).get("environment", {})
+        settings["obs_cmd_scale"] = float(saved.get("obs_cmd_scale",
+                                                    saved.get("cmd_max", 0.16)))
+        for key in ("obs_mode", "obs_history", "servo_speed", "fixed_pull_bias",
+                    "critic_dr_params"):
+            if key in saved:
+                settings[key] = type(settings[key])(saved[key])
+    return settings
+
+
+def load_policy(env: SingleLegRigEnv, ckpt: Path):
+    """Inference policy from a checkpoint; works with any env of the same shape."""
+    runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
+    runner.load(str(ckpt), map_location="cpu")
+    return runner.get_inference_policy(device="cpu")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -39,25 +69,6 @@ def main() -> None:
     out = args.out or args.ckpt.parent / "eval"
     out.mkdir(parents=True, exist_ok=True)
 
-    # Use the same fixed command normaliser that the checkpoint was trained
-    # with.  Older runs did not save obs_cmd_scale, so fall back to cmd_max.
-    # Runs from before the hardware observation have no obs_mode: they used
-    # the full 115-value state.
-    obs_scale = 0.16
-    # Runs from before the servo speed limit / fixed pull_bias used neither.
-    obs_mode, obs_history = "full", 1
-    servo_speed, fixed_pull_bias = 0.0, False
-    critic_dr_params = False          # older critics had no randomized-value inputs
-    train_cfg = args.ckpt.parent / "config.json"
-    if train_cfg.exists():
-        saved = json.loads(train_cfg.read_text()).get("environment", {})
-        obs_scale = float(saved.get("obs_cmd_scale", saved.get("cmd_max", obs_scale)))
-        obs_mode = saved.get("obs_mode", obs_mode)
-        obs_history = int(saved.get("obs_history", obs_history))
-        servo_speed = float(saved.get("servo_speed", servo_speed))
-        fixed_pull_bias = bool(saved.get("fixed_pull_bias", fixed_pull_bias))
-        critic_dr_params = bool(saved.get("critic_dr_params", critic_dr_params))
-
     cfg = RigConfig(
         num_envs=1,
         num_threads=1,
@@ -67,18 +78,11 @@ def main() -> None:
         cmd_period=args.cmd_period,
         cmd_period_jitter=0.0,
         cmd_resample=False,
-        obs_cmd_scale=obs_scale,
-        obs_mode=obs_mode,
-        obs_history=obs_history,
-        servo_speed=servo_speed,
-        fixed_pull_bias=fixed_pull_bias,
-        critic_dr_params=critic_dr_params,
         reset_noise=0.0,
+        **saved_env_settings(args.ckpt),
     )
     env = SingleLegRigEnv(cfg)
-    runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
-    runner.load(str(args.ckpt), map_location="cpu")
-    policy = runner.get_inference_policy(device="cpu")
+    policy = load_policy(env, args.ckpt)
 
     obs = env.reset()
     env.cmd_mag[0] = args.cmd_max
