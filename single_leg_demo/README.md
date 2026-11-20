@@ -91,6 +91,12 @@ holds the leg instead of yanking it straight.
 
 ## Reward
 
+There are four versions, chosen with `--reward` (default `v2`).  Each one
+adds to the previous one.  `--reward v1` reproduces the original reward
+exactly; the `rig_v1` recipe below needs it.
+
+**v1, the original reward:**
+
 ```
 2.0 × velocity tracking          exp(-0.5 ((vx - cmd) / 0.05)^2)
 − 0.02 × squared velocity error  keeps a gradient through reversals
@@ -102,6 +108,37 @@ holds the leg instead of yanking it straight.
 − 0.01 × raw action²          keep the policy out of hard saturation
 − 5.0 on failure
 ```
+
+**v2 adds smoothness and hardware-damage costs.**  The command also ramps at
+0.3 m/s² instead of stepping, and the action-rate weight rises from 0.02 to 0.5.
+
+```
+− 2.5 × action jerk     mean (a_t − 2 a_{t−1} + a_{t−2})²
+− 0.8 × tension shock   mean (ΔT per step / 20 N)²
+− 1.0 × tension limit   Σ ((T_peak / 200 N − 0.7)₊ / 0.3)²
+− 1.0 × bend limit      Σ ((bend / 0.9 rad − 0.8)₊ / 0.2)²
+− 0.5 × foot impact     ((F_peak − 62 N)₊ / 31 N)²
+− 0.2 × foot slip       min(mean slip speed in contact / 0.05 m/s, 5)
+```
+
+These costs (and the action rate) are multiplied by a curriculum factor
+k = 0.05^(0.997^iteration), which rises from 0.05 to about 0.86 at iteration
+1000 (Hwangbo et al. 2019).  They can take a step's reward down to 0 but not
+below, so failing early is never worth more than surviving.
+
+**v3 frees the swing.**  The foot may lift up to 3 cm and move up to 10 cm
+sideways without cost.  The hip sits 2 mm below the straight-leg contact
+height, so the foot touches the floor anywhere within about 4 cm of under the
+hip; the only way to bring it forward again is around the side.
+
+**v4 scores the average speed.**  The velocity terms use the carriage speed
+averaged over about one stride (exponential average, 1 s) instead of the
+instantaneous speed.  One leg moves the carriage in pulses (push, glide,
+swing), so its instantaneous speed swings between 0 and 0.3 m/s even when the
+average is right.  Scored on instantaneous speed, the squared velocity term
+ranks every walking gait below standing still.  v4 also sets the speed tolerance
+(`vel_sigma`) to 0.03 m/s instead of the default 0.06, the value the v4
+tests used.
 
 Episodes end on a foot lift above 0.12 m, a ball-joint bend above 0.9 rad, a
 carriage position beyond 98 % of the rail, or NaN.  Timeouts bootstrap values

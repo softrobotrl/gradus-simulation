@@ -77,6 +77,8 @@ def main() -> None:
     p.add_argument("--run-name", type=str, default="")
     p.add_argument("--resume", type=Path, default=None,
                    help="continue from a checkpoint; --iterations is additional")
+    p.add_argument("--actor-freeze", type=int, default=0,
+                   help="with --resume: train only the critic for this many iterations first")
     p.add_argument("--warmup", type=int, default=50,
                    help="iterations at a reduced command before the full range")
 
@@ -95,6 +97,24 @@ def main() -> None:
     p.add_argument("--action-l2-weight", type=float, default=None)
     p.add_argument("--reset-noise", type=float, default=None)
     p.add_argument("--bend-limit", type=float, default=None)
+    p.add_argument("--reward", choices=("v1", "v2", "v3", "v4"), default="v2",
+                   help="v1 = the original reward (step command, tiny rate cost); "
+                        "v2 = ramped command + smoothness/damage costs with a curriculum; "
+                        "v3 = v2 + free bands so the foot may lift and swing around the side; "
+                        "v4 = v3 + speed averaged over ~one stride")
+    p.add_argument("--vel-avg-tau", type=float, default=None, help="s; 0 = instantaneous speed")
+    p.add_argument("--lat-free", type=float, default=None)
+    p.add_argument("--foot-free", type=float, default=None)
+    p.add_argument("--rail-friction", type=float, default=None, help="N; default keeps rig.xml")
+    p.add_argument("--cmd-ramp", type=float, default=None, help="m/s^2; 0 = step command")
+    p.add_argument("--rate-weight", type=float, default=None)
+    p.add_argument("--accel-weight", type=float, default=None)
+    p.add_argument("--shock-weight", type=float, default=None)
+    p.add_argument("--tension-limit-weight", type=float, default=None)
+    p.add_argument("--bend-limit-weight", type=float, default=None)
+    p.add_argument("--impact-weight", type=float, default=None)
+    p.add_argument("--slip-weight", type=float, default=None)
+    p.add_argument("--curriculum-k0", type=float, default=None, help="1 = no curriculum")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -108,10 +128,31 @@ def main() -> None:
         num_threads=args.num_threads,
         episode_steps=args.episode_steps,
         seed=args.seed,
+        curriculum_iter_steps=args.steps_per_env,
     )
+    if args.reward == "v1":
+        # The original reward, bit for bit: step command, rate weight 0.02,
+        # no curriculum, none of the v2 costs.
+        cfg.cmd_ramp = 0.0
+        cfg.rate_weight = 0.02
+        cfg.curriculum_k0 = 1.0
+        cfg.bound_costs = False
+        for key in ("accel_weight", "shock_weight", "tension_limit_weight",
+                    "bend_limit_weight", "impact_weight", "slip_weight"):
+            setattr(cfg, key, 0.0)
+    if args.reward in ("v3", "v4"):
+        cfg.lat_free = 0.10   # the side swing reaches ~10-14 cm; beyond that still costs
+        cfg.foot_free = 0.03  # the leg cannot lift more than ~2-4 cm anyway
+    if args.reward == "v4":
+        cfg.vel_avg_tau = 1.0  # about one stride of the side-swing gait
+        cfg.vel_sigma = 0.03   # the value the v4 preference and lockstep tests used
     for key in ("residual_scale", "cmd_min", "cmd_max", "cmd_period",
                 "vel_weight", "vel_sigma", "vel_l2_weight", "progress_weight",
-                "action_l2_weight", "reset_noise", "bend_limit"):
+                "action_l2_weight", "reset_noise", "bend_limit",
+                "cmd_ramp", "rate_weight", "accel_weight", "shock_weight",
+                "tension_limit_weight", "bend_limit_weight", "impact_weight",
+                "slip_weight", "curriculum_k0", "lat_free", "foot_free", "rail_friction",
+                "vel_avg_tau"):
         value = getattr(args, key)
         if value is not None:
             cfg.__dict__[key] = value
@@ -138,6 +179,8 @@ def main() -> None:
     if args.resume:
         runner.load(str(args.resume), map_location=args.device)
         print(f"* resumed {args.resume} at iteration {runner.current_learning_iteration}")
+        # keep the cost curriculum where the checkpoint left it
+        env.env_steps = runner.current_learning_iteration * args.steps_per_env
     if args.entropy_coef is not None:
         runner.alg.entropy_coef = args.entropy_coef
     if args.learning_rate is not None:
@@ -155,9 +198,34 @@ def main() -> None:
             dist.std.requires_grad_(False)
         print(f"* fixed action std at {args.std}")
 
+    if args.actor_freeze > 0 and not args.resume:
+        print("* --actor-freeze ignored without --resume")
     full_min, full_max = cfg.cmd_min, cfg.cmd_max
     try:
-        if args.resume or args.warmup <= 0:
+        if args.resume and args.actor_freeze > 0:
+            if args.actor_freeze >= args.iterations:
+                raise SystemExit("--actor-freeze must be smaller than --iterations")
+            # Fine-tuning a pretrained (e.g. behaviour-cloned) actor: fit the
+            # fresh critic first so early advantages are not noise.  The obs
+            # normaliser is frozen too, otherwise the "frozen" actor drifts.
+            actor = runner.alg.actor
+            actor_params = [q for q in actor.parameters() if q.requires_grad]
+            for q in actor_params:
+                q.requires_grad_(False)
+            norm_on = actor.obs_normalization
+            actor.obs_normalization = False
+            print(f"* critic warm-up: actor frozen for {args.actor_freeze} iterations")
+            runner.learn(args.actor_freeze, init_at_random_ep_len=True)
+            for q in actor_params:
+                q.requires_grad_(True)
+            actor.obs_normalization = norm_on
+            # The adaptive schedule may have raised the LR while KL was ~0.
+            lr = args.learning_rate if args.learning_rate is not None else train_cfg["algorithm"]["learning_rate"]
+            runner.alg.learning_rate = lr
+            for group in runner.alg.optimizer.param_groups:
+                group["lr"] = lr
+            runner.learn(args.iterations - args.actor_freeze)
+        elif args.resume or args.warmup <= 0:
             runner.learn(args.iterations, init_at_random_ep_len=True)
         else:
             env.cfg["cmd_min"] = min(0.05, full_min)

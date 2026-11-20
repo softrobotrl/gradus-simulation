@@ -59,10 +59,56 @@ class RigConfig:
     foot_weight: float = 0.3
     lat_weight: float = 0.5
     effort_weight: float = 0.02
-    rate_weight: float = 0.02
     tension_weight: float = 0.001
     action_l2_weight: float = 0.005   # keep raw actions out of hard saturation
     failure_penalty: float = 5.0
+
+    # Reward v2: smoothness and hardware-damage costs.  Every weight below is
+    # multiplied by the curriculum factor k (see _curriculum).  Weights were
+    # chosen so one clearly bad step costs about 1 (one step of tracking
+    # reward) while smooth motion of the same size costs a few percent.
+    # ``train.py --reward v1`` restores the original reward exactly.
+    cmd_ramp: float = 0.3             # m/s^2 rate limit on the command; 0 = step command
+    rate_weight: float = 0.5          # mean (a_t - a_{t-1})^2       (v1: 0.02, no k)
+    accel_weight: float = 2.5         # mean (a_t - 2a_{t-1} + a_{t-2})^2
+    shock_weight: float = 0.8         # mean (dT per step / (0.1 Tmax))^2
+    tension_limit_weight: float = 1.0
+    tension_soft: float = 0.7         # fraction of Tmax where the tension cost starts
+    bend_limit_weight: float = 1.0
+    bend_soft: float = 0.8            # fraction of bend_limit where the bend cost starts
+    impact_weight: float = 0.5
+    foot_static_force: float = 31.0   # N, foot load holding the reset pose (measured)
+    slip_weight: float = 0.2
+    slip_scale: float = 0.05          # m/s of foot sliding that costs 1
+    slip_cap: float = 5.0             # slip cost per step is capped at this many units
+    # k = k0^(kd^iteration), the cost curriculum of Hwangbo et al. 2019 (they
+    # used k0 = 0.3).  Here the costs also see PPO's exploration noise: at the
+    # initial action std of 0.5 the v2 costs are ~4.8 per step at k = 1,
+    # against ~1.1 of tracking reward.  k0 = 0.05 keeps that early cost ~0.24.
+    # k = 0.30 at iteration 300, 0.51 at 500, 0.86 at 1000.
+    curriculum_k0: float = 0.05
+    curriculum_kd: float = 0.997
+    curriculum_iter_steps: int = 24   # env steps per PPO iteration (--steps-per-env)
+    # The costs above may take a step's reward down to 0 but not below, so
+    # surviving is never worth less than failing.  Same idea as legged_gym's
+    # only_positive_rewards, but the original (v1) terms are not clipped.
+    bound_costs: bool = True
+    # Reward v3: free bands before the foot-height and sideways penalties start.
+    # With the hip 2 mm below the straight-leg contact height the foot touches
+    # the floor anywhere within ~4 cm of under the hip, so the swing back to the
+    # front has to go around the side (a lateral bend lifts the foot).  v1/v2
+    # penalised exactly that path.  0 = the v1/v2 penalties unchanged.
+    lat_free: float = 0.0             # m of sideways foot offset that costs nothing
+    foot_free: float = 0.0            # m of foot lift that costs nothing
+    # Reward v4: track the carriage speed averaged over about one stride
+    # (exponential average, time constant in s) instead of the instantaneous
+    # speed.  One leg can only move the carriage in pulses (push, glide,
+    # swing), so the instantaneous speed swings 0 -> 0.3 m/s even when the
+    # average is right, and the squared velocity term then scores any gait
+    # below standing still.  0 = instantaneous speed (v1-v3).
+    vel_avg_tau: float = 0.0
+    # Rail (carriage) dry friction in N; < 0 keeps the value in rig.xml (0.2 N).
+    rail_friction: float = -1.0
 
     # Termination / reset.
     bend_limit: float = 0.90          # rad, per ball joint
@@ -90,6 +136,29 @@ def _bend_angle(q: np.ndarray) -> np.ndarray:
     return 2.0 * np.arccos(np.clip(np.abs(q[..., 0]), 0.0, 1.0))
 
 
+def _load_with_foot_sensors(path: str) -> mujoco.MjModel:
+    """Load the rig and add foot sensors for the reward (they do not change the physics).
+
+    sensordata[0]   touch: floor normal force on the foot sphere (N)
+    sensordata[1:4] linear velocity of the foot centre, world frame
+    sensordata[4:7] angular velocity of the foot body, world frame
+    """
+    spec = mujoco.MjSpec.from_file(path)
+    plain = mujoco.MjModel.from_xml_path(path)
+    foot = plain.geom("foot")
+    body = spec.body(plain.body(int(foot.bodyid[0])).name)
+    pos = [float(v) for v in foot.pos]
+    radius = float(foot.size[0])
+    body.add_site(name="foot_touch", type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                  size=[radius * 1.2, 0, 0], pos=pos, group=5)
+    body.add_site(name="foot_centre", pos=pos, size=[0.001, 0, 0], group=5)
+    for kind, obj in ((mujoco.mjtSensor.mjSENS_TOUCH, "foot_touch"),
+                      (mujoco.mjtSensor.mjSENS_FRAMELINVEL, "foot_centre"),
+                      (mujoco.mjtSensor.mjSENS_FRAMEANGVEL, "foot_centre")):
+        spec.add_sensor(type=kind, objtype=mujoco.mjtObj.mjOBJ_SITE, objname=obj)
+    return spec.compile()
+
+
 class SingleLegRigEnv:
     def __init__(self, cfg: RigConfig):
         self.cfg = asdict(cfg)
@@ -101,7 +170,9 @@ class SingleLegRigEnv:
         self.dt = cfg.control_dt
         self.rng = np.random.default_rng(cfg.seed)
 
-        m = mujoco.MjModel.from_xml_path(cfg.model_path)
+        m = _load_with_foot_sensors(cfg.model_path)
+        if cfg.rail_friction >= 0.0:
+            m.dof_frictionloss[m.jnt_dofadr[m.joint("slide").id]] = cfg.rail_friction
         self.m = m
         self.nq, self.nv, self.nu = m.nq, m.nv, m.nu
         if self.nu != N_TENDON:
@@ -129,6 +200,21 @@ class SingleLegRigEnv:
         self.cmd_segment = np.zeros(cfg.num_envs, dtype=np.int32)
         self.pull_bias = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
         self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+        self.prev_action2 = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+
+        # Reward v2 state.  cmd is the (ramped) command the policy sees and
+        # tracks; cmd_raw is the square-wave target it ramps towards.
+        self.cmd_raw = np.zeros(cfg.num_envs, dtype=np.float64)
+        self.prev_tension = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+        self.vx_avg = np.zeros(cfg.num_envs, dtype=np.float64)
+        self.peak_tension = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+        self.peak_foot_force = np.zeros(cfg.num_envs, dtype=np.float64)
+        self.slip_sum = np.zeros(cfg.num_envs, dtype=np.float64)
+        self.slip_n = np.zeros(cfg.num_envs, dtype=np.int32)
+        self.floor_id = m.geom("floor").id
+        self.foot_radius = float(m.geom("foot").size[0])
+        self.env_steps = 0  # control steps taken by the whole batch, drives the curriculum
+        self._k = self._curriculum()
 
         obs0 = self._obs_one(0)
         self.num_obs = int(obs0.shape[0])
@@ -153,7 +239,16 @@ class SingleLegRigEnv:
             self.cmd_mag[i] = self.rng.uniform(self.cfg["cmd_min"], self.cfg["cmd_max"])
         self.cmd_segment[i] = segment
         sign = self.cmd_sign0[i] * (1.0 if segment % 2 == 0 else -1.0)
-        self.cmd[i] = sign * self.cmd_mag[i]
+        self.cmd_raw[i] = sign * self.cmd_mag[i]
+        ramp = self.cfg["cmd_ramp"]
+        if ramp > 0.0:
+            # Rate-limit the command so a reversal asks for an acceleration
+            # the leg can deliver (the baseline reached ~0.17-0.31 m/s^2).
+            # Called once per control step, and once at reset.
+            step = ramp * self.dt
+            self.cmd[i] += float(np.clip(self.cmd_raw[i] - self.cmd[i], -step, step))
+        else:
+            self.cmd[i] = self.cmd_raw[i]
 
     def _phase(self, i: int) -> float:
         period = max(self.cmd_period[i], 1e-3)
@@ -237,13 +332,29 @@ class SingleLegRigEnv:
 
         self.t[i] = 0
         self.prev_action[i] = 0.0
+        self.prev_action2[i] = 0.0
+        self.prev_tension[i] = -d.actuator_force
+        self.vx_avg[i] = float(d.qvel[0])
         self.cmd_mag[i] = (self.rng.uniform(self.cfg["cmd_min"], self.cfg["cmd_max"])
                            if randomize else self.cfg["cmd_min"])
         self.cmd_sign0[i] = 1.0 if self.rng.random() < 0.5 else -1.0
         self.cmd_segment[i] = 0
         jitter = self.cfg["cmd_period_jitter"]
         self.cmd_period[i] = self.cfg["cmd_period"] * (1.0 + self.rng.uniform(-jitter, jitter))
+        self.cmd[i] = 0.0  # the carriage starts at rest; a ramped command starts there too
         self._set_cmd(i)
+
+    def _curriculum(self) -> float:
+        """Cost multiplier k = k0^(kd^j), j = PPO iteration (Hwangbo et al. 2019).
+
+        Starts at k0 and rises towards 1, so the policy first learns to move and
+        then learns to move gently.  k0 = 0.05, kd = 0.997 gives k = 0.30 at
+        iteration 300 and 0.86 at iteration 1000.  (The paper used k0 = 0.3;
+        lower here because the rate/jerk costs also charge PPO's exploration
+        noise, which made failing early attractive at the start.)
+        """
+        j = self.env_steps / max(self.cfg["curriculum_iter_steps"], 1)
+        return float(self.cfg["curriculum_k0"] ** (self.cfg["curriculum_kd"] ** j))
 
     def _reward_one(self, i: int, action: np.ndarray, action_raw: np.ndarray):
         d = self.datas[i]
@@ -258,23 +369,66 @@ class SingleLegRigEnv:
         force = -d.actuator_force / self.fmax
         pull = (self.l0 - d.ctrl) / self.stroke
 
-        err = vx - cmd
+        tau = self.cfg["vel_avg_tau"]
+        if tau > 0.0:
+            self.vx_avg[i] += min(1.0, self.dt / tau) * (vx - self.vx_avg[i])
+            v_track = float(self.vx_avg[i])
+        else:
+            v_track = vx
+        err = v_track - cmd
         sigma = max(self.cfg["vel_sigma"], 1e-6)
         r_vel = math.exp(-0.5 * (err / sigma) ** 2)
         r_vel_l2 = -self.cfg["vel_l2_weight"] * (err / sigma) ** 2
-        r_prog = (float(np.clip(vx / cmd, 0.0, 1.5)) if abs(cmd) > 1e-6 else 0.0)
+        # Divide by at least cmd_min: with a ramped command, cmd passes near 0 at
+        # every reversal and reset, and vx / cmd would pay the maximum for drift.
+        # (Identical to the original for a step command, where |cmd| >= cmd_min.)
+        denom = math.copysign(max(abs(cmd), self.cfg["cmd_min"]), cmd)
+        r_prog = (float(np.clip(v_track / denom, 0.0, 1.5)) if abs(cmd) > 1e-6 else 0.0)
         rail_half = self.cfg["rail_half"]
         over = max(0.0, abs(x) - 0.7 * rail_half)
         r_rail = -0.5 * (over / (0.3 * rail_half)) ** 2
-        r_foot = -0.5 * ((foot_z - FOOT_RADIUS) / 0.02) ** 2
-        r_lat = -0.5 * (foot_y / 0.03) ** 2
+        lift = max(0.0, foot_z - FOOT_RADIUS - self.cfg["foot_free"]) if self.cfg["foot_free"] > 0 else foot_z - FOOT_RADIUS
+        r_foot = -0.5 * (lift / 0.02) ** 2
+        side = max(0.0, abs(foot_y) - self.cfg["lat_free"])
+        r_lat = -0.5 * (side / 0.03) ** 2
         r_effort = -self.cfg["effort_weight"] * float(np.mean(pull ** 2))
-        r_rate = -self.cfg["rate_weight"] * float(np.mean((action - self.prev_action[i]) ** 2))
+        k = self._k
+        r_rate = -k * self.cfg["rate_weight"] * float(np.mean((action - self.prev_action[i]) ** 2))
         r_ten = -self.cfg["tension_weight"] * float(np.mean(force))
         # Penalise the un-clipped action.  Without this the policy drifts into
         # bang-bang actions (|a| > 5), clipping removes all command magnitude
         # information, and the leg pumps at one fixed amplitude.
         r_action_l2 = -self.cfg["action_l2_weight"] * float(np.mean(action_raw ** 2))
+
+        # ---- reward v2: smoothness and damage costs (all scaled by k) ----
+        # Jerk: sudden reversals of the servo targets.  A smooth full-range
+        # 1.5 Hz sine costs ~600x less than one spike of the baseline policy.
+        if self.t[i] >= 3:
+            accel = action - 2.0 * self.prev_action[i] + self.prev_action2[i]
+            r_accel = -k * self.cfg["accel_weight"] * float(np.mean(accel ** 2))
+        else:
+            r_accel = 0.0
+        # Tension shock: change in cable tension over one control step,
+        # 10 % of the force limit (20 N) per step counts as 1.
+        tension = -d.actuator_force
+        d_ten = (tension - self.prev_tension[i]) / (0.1 * self.fmax)
+        r_shock = -k * self.cfg["shock_weight"] * float(np.mean(d_ten ** 2))
+        # Soft limits: zero below the soft fraction, 1 per cable / joint at the limit.
+        soft = self.cfg["tension_soft"]
+        t_over = np.clip(self.peak_tension[i] / self.fmax - soft, 0.0, None) / (1.0 - soft)
+        r_tlim = -k * self.cfg["tension_limit_weight"] * float(np.sum(t_over ** 2))
+        soft = self.cfg["bend_soft"]
+        b_over = np.clip(bend / self.cfg["bend_limit"] - soft, 0.0, None) / (1.0 - soft)
+        r_blim = -k * self.cfg["bend_limit_weight"] * float(np.sum(b_over ** 2))
+        # Foot impact: peak foot force above twice the static load, in units of the static load.
+        f_static = self.cfg["foot_static_force"]
+        f_over = max(0.0, float(self.peak_foot_force[i]) - 2.0 * f_static) / f_static
+        r_impact = -k * self.cfg["impact_weight"] * f_over ** 2
+        # Foot slip: mean sliding speed while in contact.  Linear and capped:
+        # the squared form let one touchdown skid outweigh the failure penalty.
+        slip = float(self.slip_sum[i] / self.slip_n[i]) if self.slip_n[i] > 0 else 0.0
+        r_slip = -k * self.cfg["slip_weight"] * min(slip / self.cfg["slip_scale"],
+                                                    self.cfg["slip_cap"])
 
         reward = (
             self.cfg["vel_weight"] * r_vel
@@ -284,7 +438,18 @@ class SingleLegRigEnv:
             + self.cfg["foot_weight"] * r_foot
             + self.cfg["lat_weight"] * r_lat
             + r_effort + r_rate + r_ten + r_action_l2
+            + r_accel + r_shock + r_tlim + r_blim + r_impact + r_slip
         )
+        clipped = False
+        if self.cfg["bound_costs"]:
+            # The smoothness/damage costs may pull a step down to zero but not
+            # below, so they never make failing early worth more than surviving.
+            # The original terms are left exactly as they were.
+            costs = -(r_rate + r_accel + r_shock + r_tlim + r_blim + r_impact + r_slip)
+            base = reward + costs
+            applied = min(costs, max(base, 0.0))
+            clipped = applied < costs
+            reward = base - applied
         failed = (
             foot_z > self.cfg["foot_lift_limit"]
             or bend.max() > self.cfg["bend_limit"]
@@ -300,16 +465,69 @@ class SingleLegRigEnv:
             "r_foot": r_foot, "r_lat": r_lat,
             "r_effort": r_effort, "r_rate": r_rate, "r_ten": r_ten,
             "r_action_l2": r_action_l2,
+            "r_accel": r_accel, "r_shock": r_shock, "r_tlim": r_tlim, "r_blim": r_blim,
+            "r_impact": r_impact, "r_slip": r_slip,
+            "tension_peak": float(self.peak_tension[i].max()),
+            "foot_force_peak": float(self.peak_foot_force[i]), "slip": slip,
+            "clipped": float(clipped),
         }
         return float(reward), bool(failed), info
 
     # ------------------------------------------------------------------ #
+    def _foot_contact(self, d, f6: np.ndarray, vel: np.ndarray) -> tuple[float, float]:
+        """Total floor normal force and the fastest horizontal contact-point speed."""
+        if d.ncon == 0:
+            return 0.0, 0.0
+        m = self.m
+        fn = 0.0
+        slip = 0.0
+        geoms = d.contact.geom
+        for c in range(d.ncon):
+            g1, g2 = geoms[c]
+            if g1 != self.floor_id and g2 != self.floor_id:
+                continue
+            mujoco.mj_contactForce(m, d, c, f6)
+            fn += f6[0]
+            g = g2 if g1 == self.floor_id else g1
+            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_GEOM, g, vel, 0)
+            # velocity of the contact point = v_geom + w x (p_contact - p_geom)
+            rx, ry, rz = d.contact.pos[c] - d.geom_xpos[g]
+            wx, wy, wz = vel[0], vel[1], vel[2]
+            vx = vel[3] + wy * rz - wz * ry
+            vy = vel[4] + wz * rx - wx * rz
+            slip = max(slip, math.hypot(vx, vy))
+        return fn, slip
+
+    def _foot_sensor(self, d) -> tuple[float, float]:
+        """Fast version of _foot_contact from the foot sensors (same quantities).
+
+        The foot is a sphere, so the contact point slides at
+        v_centre + w x (0, 0, -R) = (vx - R wy, vy + R wx).
+        """
+        s = d.sensordata
+        r = self.foot_radius
+        return float(s[0]), math.hypot(s[1] - r * s[5], s[2] + r * s[4])
+
     def _phys_chunk(self, idxs: np.ndarray, ctrl: np.ndarray) -> None:
+        track_foot = self.cfg["impact_weight"] != 0.0 or self.cfg["slip_weight"] != 0.0
         for i in idxs:
             d = self.datas[i]
             d.ctrl[:] = ctrl[i]
+            peak = np.full(N_TENDON, -np.inf)
+            f_peak, slip_sum, slip_n = 0.0, 0.0, 0
             for _ in range(self.n_substeps):
                 mujoco.mj_step(self.m, d)
+                np.maximum(peak, -d.actuator_force, out=peak)
+                if track_foot:
+                    fn, slip = self._foot_sensor(d)
+                    f_peak = max(f_peak, fn)
+                    if fn > 1e-6:
+                        slip_sum += slip
+                        slip_n += 1
+            self.peak_tension[i] = peak
+            self.peak_foot_force[i] = f_peak
+            self.slip_sum[i] = slip_sum
+            self.slip_n[i] = slip_n
 
     def step(self, actions, auto_reset: bool = True):
         action_raw = actions.detach().cpu().numpy() if hasattr(actions, "detach") else np.asarray(actions)
@@ -331,9 +549,12 @@ class SingleLegRigEnv:
         final_obs = np.zeros_like(self.obs)
         keys = ("vx", "x", "cmd", "err", "foot_z", "foot_y", "bend",
                 "r_vel", "r_vel_l2", "r_prog", "r_rail", "r_foot", "r_lat",
-                "r_effort", "r_rate", "r_ten", "r_action_l2")
+                "r_effort", "r_rate", "r_ten", "r_action_l2",
+                "r_accel", "r_shock", "r_tlim", "r_blim", "r_impact", "r_slip",
+                "tension_peak", "foot_force_peak", "slip", "clipped")
         log = {k: np.zeros(self.num_envs) for k in keys}
 
+        self._k = self._curriculum()
         for i in range(self.num_envs):
             self.t[i] += 1
             self._set_cmd(i)
@@ -343,9 +564,12 @@ class SingleLegRigEnv:
             done[i] = fail or (self.t[i] >= self.max_episode_length)
             for k in keys:
                 log[k][i] = info[k]
+            self.prev_action2[i] = self.prev_action[i]
             self.prev_action[i] = action[i]
+            self.prev_tension[i] = -self.datas[i].actuator_force
             self.obs[i] = self._obs_one(i)
             final_obs[i] = self.obs[i]
+        self.env_steps += 1
 
         time_out = done & ~failed
         if auto_reset and done.any():
@@ -371,7 +595,12 @@ class SingleLegRigEnv:
                 "/failed": float(failed.mean()),
                 **{f"/{k}": float(log[k].mean()) for k in
                    ("r_vel", "r_vel_l2", "r_prog", "r_rail", "r_foot", "r_lat",
-                    "r_effort", "r_rate", "r_ten", "r_action_l2")},
+                    "r_effort", "r_rate", "r_ten", "r_action_l2",
+                    "r_accel", "r_shock", "r_tlim", "r_blim", "r_impact", "r_slip",
+                    "slip", "clipped")},
+                "/curriculum_k": self._k,
+                "/tension_peak_max": float(log["tension_peak"].max()),
+                "/foot_force_peak_max": float(log["foot_force_peak"].max()),
             },
         }
         return (

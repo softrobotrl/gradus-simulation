@@ -42,10 +42,12 @@ def main() -> None:
     # Use the same fixed command normaliser that the checkpoint was trained
     # with.  Older runs did not save obs_cmd_scale, so fall back to cmd_max.
     obs_scale = 0.16
+    cmd_ramp = 0.0  # runs saved before reward v2 used a step command
     train_cfg = args.ckpt.parent / "config.json"
     if train_cfg.exists():
         saved = json.loads(train_cfg.read_text()).get("environment", {})
         obs_scale = float(saved.get("obs_cmd_scale", saved.get("cmd_max", obs_scale)))
+        cmd_ramp = float(saved.get("cmd_ramp", cmd_ramp))
 
     cfg = RigConfig(
         num_envs=1,
@@ -58,6 +60,8 @@ def main() -> None:
         cmd_resample=False,
         obs_cmd_scale=obs_scale,
         reset_noise=0.0,
+        cmd_ramp=cmd_ramp,
+        rail_friction=float(saved.get("rail_friction", -1.0)) if train_cfg.exists() else -1.0,
     )
     env = SingleLegRigEnv(cfg)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
@@ -68,6 +72,7 @@ def main() -> None:
     env.cmd_mag[0] = args.cmd_max
     env.cmd_sign0[0] = 1.0
     env.cmd_period[0] = args.cmd_period
+    env.cmd[0] = 0.0  # restart a ramped command from rest
     env._set_cmd(0)
     env.obs[0] = env._obs_one(0)
     obs = env.get_observations()
