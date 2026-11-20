@@ -14,8 +14,13 @@ class LegPPO(PPO):
         # the actual final observation, which env.step preserves before reset.
         timeouts = extras["time_outs"].to(self.device).bool()
         if timeouts.any():
-            final_obs = extras["final_observation"].to(self.device)[timeouts]
-            final_obs = TensorDict({"policy": final_obs}, batch_size=[len(final_obs)])
+            final = extras["final_observation"]
+            if isinstance(final, TensorDict):
+                # env provides every obs group (e.g. a separate critic group)
+                final_obs = final.to(self.device)[timeouts]
+            else:
+                final = final.to(self.device)[timeouts]
+                final_obs = TensorDict({"policy": final}, batch_size=[len(final)])
             with torch.no_grad():
                 final_values = self.critic(final_obs).squeeze(-1)
             rewards = rewards.clone()

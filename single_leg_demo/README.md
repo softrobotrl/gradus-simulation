@@ -60,34 +60,45 @@ every reset.
 
 ## Observations and actions
 
-Observations are proprioceptive (plus the commanded velocity), 115 values:
+The policy only sees what the real rig can know. Full definitions, units and
+time order are in [STATES.md](STATES.md). Per 20 ms step, 41 values:
 
-| group | count |
-|---|---|
-| slider position / velocity, commanded velocity, command phase (sin, cos) | 5 |
-| 13 ball-joint rotation vectors | 39 |
-| 13 ball-joint velocities (×0.05) | 39 |
-| normalised tendon lengths | 8 |
-| normalised tendon forces | 8 |
-| current servo pull targets | 8 |
-| previous action | 8 |
+| group | count | source on hardware |
+|---|---|---|
+| target velocity, phase (sin, cos) | 3 | our controller / clock |
+| previous action | 8 | last policy output |
+| last servo targets | 8 | what our controller sent |
+| servo positions | 8 | servo encoders |
+| servo loads | 8 | servo load reading |
+| rail IMU accelerometer + gyro | 6 | IMU on the carriage |
 
-The command alternates sign every `cmd_period` seconds (2 s, ±20 % jitter).
+The last 8 steps are stacked, so the policy input is 328 values.  The critic
+(training only) gets the full 115-value simulator state: slider position and
+velocity, target velocity, phase, 13 ball-joint rotations and velocities,
+tendon lengths and forces, servo targets and the previous action, plus the
+carriage speed the reward scores and 13 domain-randomized values (129 in
+total).  Use `--obs-mode full` to give the
+policy the 115-value state instead (old behaviour).  Domain randomization
+(`--dr`) is described in [domain_randomization.md](domain_randomization.md).
+
+The target velocity ("command", `cmd` in code) alternates sign every `cmd_period` seconds (2 s, ±20 % jitter).
 Its magnitude is resampled in `[cmd_min, cmd_max]` at **every reversal**, so a
 single fixed-amplitude pump cannot satisfy the reward; the policy has to read
 the commanded magnitude.  The command phase lets it anticipate the sign flip,
 but not the next magnitude.
 
-The eight actions are residuals on the tendon pull that holds the reset pose:
+The eight actions are residuals on a fixed tendon pull:
 
 ```
 pull = clip(pull_bias + residual_scale * action, 0, 1)
 ctrl = l0 - stroke * pull
 ```
 
-The servo target is low-pass filtered (50/50) and clamped to the actuator
-range.  `pull_bias` is measured at reset from the bent pose, so zero action
-holds the leg instead of yanking it straight.
+`pull_bias` is a one-off calibration: every tendon just taut with the leg
+straight, which is pull 0 for this model.  The sent servo target is low-pass
+filtered (50/50) and clamped to the actuator range.  The simulated servo then
+moves toward it at no more than `servo_speed` (0.07 m/s at the spool, an
+assumed hobby-servo 0.15 s / 60°, until the real servo is known).
 
 ## Reward
 

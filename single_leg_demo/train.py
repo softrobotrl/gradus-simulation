@@ -42,7 +42,7 @@ def training_config(name: str, steps: int) -> dict:
             "value_loss_coef": 0.5,
         },
         "actor": {
-            "class_name": "MLPModel",
+            "class_name": "single_leg_demo.models:ClippedMLPModel",   # clips normalized inputs
             "hidden_dims": [256, 256],
             "activation": "elu",
             "obs_normalization": True,
@@ -53,12 +53,13 @@ def training_config(name: str, steps: int) -> dict:
             },
         },
         "critic": {
-            "class_name": "MLPModel",
+            "class_name": "single_leg_demo.models:ClippedMLPModel",   # clips normalized inputs
             "hidden_dims": [256, 256],
             "activation": "elu",
             "obs_normalization": True,
         },
-        "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
+        # actor: hardware-measurable state; critic: full simulator state (training only)
+        "obs_groups": {"actor": ["policy"], "critic": ["critic"]},
         "num_steps_per_env": steps,
         "save_interval": 50,
         "run_name": name,
@@ -115,6 +116,14 @@ def main() -> None:
     p.add_argument("--impact-weight", type=float, default=None)
     p.add_argument("--slip-weight", type=float, default=None)
     p.add_argument("--curriculum-k0", type=float, default=None, help="1 = no curriculum")
+    p.add_argument("--obs-mode", choices=("hardware", "full"), default=None,
+                   help="actor observation: hardware sensors (default) or full sim state")
+    p.add_argument("--obs-history", type=int, default=None,
+                   help="hardware steps stacked for the actor (default 8)")
+    p.add_argument("--dr", action="store_true",
+                   help="domain randomization (see domain_randomization.md)")
+    p.add_argument("--dr-ramp", type=int, default=300,
+                   help="iterations to widen randomization from nominal to full (0 = full at once)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -129,6 +138,7 @@ def main() -> None:
         episode_steps=args.episode_steps,
         seed=args.seed,
         curriculum_iter_steps=args.steps_per_env,
+        dr_enabled=args.dr,
     )
     if args.reward == "v1":
         # The original reward, bit for bit: step command, rate weight 0.02,
@@ -152,7 +162,7 @@ def main() -> None:
                 "cmd_ramp", "rate_weight", "accel_weight", "shock_weight",
                 "tension_limit_weight", "bend_limit_weight", "impact_weight",
                 "slip_weight", "curriculum_k0", "lat_free", "foot_free", "rail_friction",
-                "vel_avg_tau"):
+                "vel_avg_tau", "obs_mode", "obs_history"):
         value = getattr(args, key)
         if value is not None:
             cfg.__dict__[key] = value
@@ -173,6 +183,7 @@ def main() -> None:
     }
     (run_dir / "config.json").write_text(json.dumps(settings, indent=2))
     print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} "
+          f"({cfg.obs_mode}) critic_obs={env.num_critic_obs} dr={cfg.dr_enabled} "
           f"threads={env.num_threads} device={args.device}")
 
     runner = OnPolicyRunner(env, train_cfg, str(run_dir), device=args.device)
@@ -198,6 +209,26 @@ def main() -> None:
             dist.std.requires_grad_(False)
         print(f"* fixed action std at {args.std}")
 
+    # Domain randomization ramp-up: dr_scale goes 0 -> 1 over --dr-ramp
+    # iterations, updated between 50-iteration chunks.  New draws take effect
+    # as each env resets.  A resumed run continues at full randomization.
+    ramp = args.dr_ramp if (cfg.dr_enabled and not args.resume) else 0
+    if cfg.dr_enabled:
+        env.cfg["dr_scale"] = 0.0 if ramp > 0 else 1.0
+        env.reset()
+    trained = [0]   # iterations run so far (rsl_rl's own counter overlaps across learn calls)
+
+    def learn(n: int, init_random: bool = False) -> None:
+        done = 0
+        while done < n:
+            chunk = n - done if ramp <= 0 else min(50, n - done)
+            if ramp > 0:
+                env.cfg["dr_scale"] = min(1.0, trained[0] / ramp)
+                print(f"* dr_scale={env.cfg['dr_scale']:.2f} (iteration {trained[0]})")
+            runner.learn(chunk, init_at_random_ep_len=init_random and done == 0)
+            done += chunk
+            trained[0] += chunk
+
     if args.actor_freeze > 0 and not args.resume:
         print("* --actor-freeze ignored without --resume")
     full_min, full_max = cfg.cmd_min, cfg.cmd_max
@@ -215,7 +246,7 @@ def main() -> None:
             norm_on = actor.obs_normalization
             actor.obs_normalization = False
             print(f"* critic warm-up: actor frozen for {args.actor_freeze} iterations")
-            runner.learn(args.actor_freeze, init_at_random_ep_len=True)
+            learn(args.actor_freeze, init_random=True)
             for q in actor_params:
                 q.requires_grad_(True)
             actor.obs_normalization = norm_on
@@ -224,22 +255,22 @@ def main() -> None:
             runner.alg.learning_rate = lr
             for group in runner.alg.optimizer.param_groups:
                 group["lr"] = lr
-            runner.learn(args.iterations - args.actor_freeze)
+            learn(args.iterations - args.actor_freeze)
         elif args.resume or args.warmup <= 0:
-            runner.learn(args.iterations, init_at_random_ep_len=True)
+            learn(args.iterations, init_random=True)
         else:
             env.cfg["cmd_min"] = min(0.05, full_min)
             env.cfg["cmd_max"] = min(0.08, full_max)
             first = min(args.warmup, args.iterations)
             print(f"* warmup: {first} iterations at cmd={env.cfg['cmd_min']:.2f}.."
                   f"{env.cfg['cmd_max']:.2f} m/s")
-            runner.learn(first, init_at_random_ep_len=True)
+            learn(first, init_random=True)
             remaining = args.iterations - first
             if remaining > 0:
                 env.cfg["cmd_min"] = full_min
                 env.cfg["cmd_max"] = full_max
                 print(f"* full: {remaining} iterations at cmd={full_min:.2f}..{full_max:.2f} m/s")
-                runner.learn(remaining)
+                learn(remaining)
     finally:
         final = run_dir / f"model_{runner.current_learning_iteration}.pt"
         try:
