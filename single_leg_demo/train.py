@@ -21,6 +21,7 @@ import numpy as np
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
+from single_leg_demo import rewards
 from single_leg_demo.rig_env import RigConfig, SingleLegRigEnv
 
 
@@ -98,11 +99,14 @@ def main() -> None:
     p.add_argument("--action-l2-weight", type=float, default=None)
     p.add_argument("--reset-noise", type=float, default=None)
     p.add_argument("--bend-limit", type=float, default=None)
-    p.add_argument("--reward", choices=("v1", "v2", "v3", "v4"), default="v2",
-                   help="v1 = the original reward (step command, tiny rate cost); "
+    p.add_argument("--reward", choices=sorted(rewards.PRESETS), default=rewards.DEFAULT_PRESET,
+                   help="reward preset (rewards.py): v1 = the original reward; "
                         "v2 = ramped command + smoothness/damage costs with a curriculum; "
                         "v3 = v2 + free bands so the foot may lift and swing around the side; "
-                        "v4 = v3 + speed averaged over ~one stride")
+                        "v4 = v3 + speed averaged over ~one stride (default)")
+    p.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
+                   help="set any RigConfig field, e.g. --set accel_weight=1.0 "
+                        "(repeatable; applied after --reward and the flags below)")
     p.add_argument("--vel-avg-tau", type=float, default=None, help="s; 0 = instantaneous speed")
     p.add_argument("--lat-free", type=float, default=None)
     p.add_argument("--foot-free", type=float, default=None)
@@ -130,7 +134,6 @@ def main() -> None:
 
     name = args.run_name or time.strftime("run_%Y%m%d_%H%M%S")
     run_dir = Path("logs/single_leg_demo") / name
-    run_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = RigConfig(
         num_envs=args.num_envs,
@@ -140,22 +143,7 @@ def main() -> None:
         curriculum_iter_steps=args.steps_per_env,
         dr_enabled=args.dr,
     )
-    if args.reward == "v1":
-        # The original reward, bit for bit: step command, rate weight 0.02,
-        # no curriculum, none of the v2 costs.
-        cfg.cmd_ramp = 0.0
-        cfg.rate_weight = 0.02
-        cfg.curriculum_k0 = 1.0
-        cfg.bound_costs = False
-        for key in ("accel_weight", "shock_weight", "tension_limit_weight",
-                    "bend_limit_weight", "impact_weight", "slip_weight"):
-            setattr(cfg, key, 0.0)
-    if args.reward in ("v3", "v4"):
-        cfg.lat_free = 0.10   # the side swing reaches ~10-14 cm; beyond that still costs
-        cfg.foot_free = 0.03  # the leg cannot lift more than ~2-4 cm anyway
-    if args.reward == "v4":
-        cfg.vel_avg_tau = 1.0  # about one stride of the side-swing gait
-        cfg.vel_sigma = 0.03   # the value the v4 preference and lockstep tests used
+    rewards.apply_preset(cfg, args.reward)
     for key in ("residual_scale", "cmd_min", "cmd_max", "cmd_period",
                 "vel_weight", "vel_sigma", "vel_l2_weight", "progress_weight",
                 "action_l2_weight", "reset_noise", "bend_limit",
@@ -166,6 +154,7 @@ def main() -> None:
         value = getattr(args, key)
         if value is not None:
             cfg.__dict__[key] = value
+    rewards.apply_overrides(cfg, args.set)
     # Fixed command normaliser for the whole run; keeping it independent of
     # the per-segment sampled magnitude makes the observation well defined.
     cfg.obs_cmd_scale = cfg.cmd_max
@@ -181,6 +170,7 @@ def main() -> None:
         "training": train_cfg,
         "device": args.device,
     }
+    run_dir.mkdir(parents=True, exist_ok=True)     # after the config is known to be valid
     (run_dir / "config.json").write_text(json.dumps(settings, indent=2))
     print(f"* run: {run_dir}  envs={env.num_envs} obs={env.num_obs} "
           f"({cfg.obs_mode}) critic_obs={env.num_critic_obs} dr={cfg.dr_enabled} "

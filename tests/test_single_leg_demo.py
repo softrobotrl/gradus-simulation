@@ -298,5 +298,51 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
 
+class RewardModuleTests(unittest.TestCase):
+    def test_presets_and_overrides(self):
+        from single_leg_demo import rewards
+        cfg = rewards.apply_preset(RigConfig(), "v4")
+        self.assertEqual((cfg.vel_avg_tau, cfg.vel_sigma, cfg.reward_preset), (1.0, 0.03, "v4"))
+        rewards.apply_overrides(cfg, ["accel_weight=1.5", "bound_costs=false",
+                                      "obs_history=4", "dr_friction=(0.3, 1.0)"])
+        self.assertEqual((cfg.accel_weight, cfg.bound_costs, cfg.obs_history, cfg.dr_friction),
+                         (1.5, False, 4, (0.3, 1.0)))
+        with self.assertRaises(SystemExit):
+            rewards.apply_overrides(cfg, ["accel_wieght=1"])     # typo is an error, not a no-op
+        for preset in rewards.PRESETS.values():                   # presets only touch real fields
+            self.assertTrue(set(preset) <= {f for f in vars(RigConfig())})
+        self.assertTrue(rewards.REWARD_FIELDS <= set(vars(RigConfig())))
+
+
+@unittest.skipUnless(RIG_XML.exists(), "build the rig first: python -m single_leg_demo.build_rig")
+class RewardBehaviourTests(unittest.TestCase):
+    def test_logged_terms_add_up_to_the_reward(self):
+        from single_leg_demo import rewards
+        cfg = rewards.apply_preset(RigConfig(num_envs=1, num_threads=1, episode_steps=100,
+                                             bound_costs=False), "v4")
+        env = SingleLegRigEnv(cfg)
+        try:
+            env.reset()
+            rng = np.random.default_rng(0)
+            for _ in range(40):
+                act = torch.from_numpy(rng.uniform(-1, 1, (1, env.num_actions)).astype(np.float32))
+                _, r, done, extras = env.step(act)
+                if bool(done[0]):
+                    break
+                parts = sum(v for k, v in extras["log"].items() if k.startswith("/r_"))
+                self.assertAlmostEqual(parts, float(r[0]), places=4)
+        finally:
+            env.close()
+
+    def test_preference_v4_prefers_walking_v1_standing(self):
+        # The core check behind reward v4 (REWARD.md): scored on the same physics,
+        # v4 must rank the scripted walk above standing still; v1 did the opposite.
+        from single_leg_demo.reward_check import preference as pref
+        for preset, want in (("v4", "PASS"), ("v1", "FAIL")):
+            cfg = pref.make_config(preset, [], rail=3.0, cmd=0.07, period=4.0, steps=600)
+            label, why = pref.verdict(pref.score(cfg))
+            self.assertEqual(label, want, f"{preset}: {why}")
+
+
 if __name__ == "__main__":
     unittest.main()

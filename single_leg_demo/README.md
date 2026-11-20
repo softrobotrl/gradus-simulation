@@ -102,9 +102,12 @@ assumed hobby-servo 0.15 s / 60°, until the real servo is known).
 
 ## Reward
 
-There are four versions, chosen with `--reward` (default `v2`).  Each one
-adds to the previous one.  `--reward v1` reproduces the original reward
-exactly; the `rig_v1` recipe below needs it.
+There are four versions (presets), chosen with `--reward` (default `v4`).
+Each one adds to the previous one.  `--reward v1` reproduces the original
+reward exactly.  The terms and presets live in [rewards.py](rewards.py); to
+change the reward, read [REWARD.md](REWARD.md) first.  It covers adding a
+term, `--set field=value` overrides, and the checks to run before training
+(`single_leg_demo/reward_check`, seconds instead of a 30-minute run).
 
 **v1, the original reward:**
 
@@ -173,6 +176,13 @@ python -m single_leg_demo.train --run-name rig_v1 \
     --cmd-min 0.06 --cmd-max 0.14 --vel-sigma 0.05 --device cuda
 ```
 
+That recipe predates the reward presets, the hardware observations and the
+servo model.  For the same environment and reward as `rig_v1`, add `--reward v1
+--obs-mode full --set servo_speed=0 --set fixed_pull_bias=false --set
+critic_scored_speed=false --set critic_dr_params=false` (checked to match the
+old environment exactly; the networks now also clip normalized inputs at ±5,
+see [models.py](models.py)).
+
 The first 20 iterations use a reduced command (0.05–0.08 m/s); the rest use
 0.06–0.14 m/s.  The command magnitude changes at every reversal.  Checkpoints
 go to `logs/single_leg_demo/<run>/model_*.pt`.
@@ -194,9 +204,10 @@ python -m single_leg_demo.train \
 reversal.  This is what breaks the fixed-amplitude pump that an earlier
 per-episode command produced.
 
-Useful overrides: `--residual-scale`, `--cmd-period`, `--vel-sigma`,
-`--vel-l2-weight`, `--action-l2-weight`, `--reset-noise`, `--bend-limit`,
-`--entropy-coef`, `--learning-rate`, `--std`.
+Useful overrides: `--set FIELD=VALUE` for any `RigConfig` field (repeatable),
+plus `--residual-scale`, `--cmd-period`, `--vel-sigma`, `--vel-l2-weight`,
+`--action-l2-weight`, `--reset-noise`, `--bend-limit`, `--entropy-coef`,
+`--learning-rate`, `--std`.
 
 ### Result (`rig_v3`, 400 fine-tune iterations)
 

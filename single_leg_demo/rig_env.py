@@ -42,9 +42,11 @@ import numpy as np
 import torch
 from tensordict import TensorDict
 
+from single_leg_demo import rewards
+
 N_BALL = 13
 N_TENDON = 8
-FOOT_RADIUS = 0.015
+FOOT_RADIUS = rewards.FOOT_RADIUS
 HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step
 GRAVITY = 9.81
 CMD_BUF = 3          # sent commands kept for the control delay (max 2 steps = 40 ms)
@@ -73,7 +75,10 @@ class RigConfig:
     gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro (clipped at ±2)
     acc_clip: float = 3.0            # g, rail IMU accelerometer clip
 
-    # Reward weights.
+    # Reward.  The terms and presets live in rewards.py (start there, and see
+    # REWARD.md); these fields are their weights and parameters.  Defaults are
+    # reward v2; rewards.apply_preset sets v1/v3/v4.
+    reward_preset: str = ""           # which preset set the fields below (provenance only)
     vel_weight: float = 2.0
     vel_sigma: float = 0.06
     vel_l2_weight: float = 0.02      # keeps a gradient during fast reversals
@@ -669,6 +674,7 @@ class SingleLegRigEnv:
         return float(self.cfg["curriculum_k0"] ** (self.cfg["curriculum_kd"] ** j))
 
     def _reward_one(self, i: int, action: np.ndarray, action_raw: np.ndarray):
+        """Reward, failure flag and log values for env i (terms: rewards.py)."""
         d = self.datas[i]
         vx = float(d.qvel[0])
         x = float(d.qpos[self.slide_qadr])
@@ -678,8 +684,6 @@ class SingleLegRigEnv:
         foot_y = float(tip[1])
         quat = np.stack([d.qpos[a:a + 4] for a in self.ball_qadr])
         bend = _bend_angle(quat)
-        force = -d.actuator_force / self.fmax
-        pull = (self.l0 - d.ctrl) / self.stroke
 
         # The speed the velocity terms score; the critic sees it too (_obs_critic).
         tau = self.cfg["vel_avg_tau"]
@@ -688,81 +692,21 @@ class SingleLegRigEnv:
         else:
             self.vx_avg[i] = vx
         v_track = float(self.vx_avg[i])
-        err = v_track - cmd
-        sigma = max(self.cfg["vel_sigma"], 1e-6)
-        r_vel = math.exp(-0.5 * (err / sigma) ** 2)
-        r_vel_l2 = -self.cfg["vel_l2_weight"] * (err / sigma) ** 2
-        # Divide by at least cmd_min: with a ramped command, cmd passes near 0 at
-        # every reversal and reset, and vx / cmd would pay the maximum for drift.
-        # (Identical to the original for a step command, where |cmd| >= cmd_min.)
-        denom = math.copysign(max(abs(cmd), self.cfg["cmd_min"]), cmd)
-        r_prog = (float(np.clip(v_track / denom, 0.0, 1.5)) if abs(cmd) > 1e-6 else 0.0)
-        rail_half = self.cfg["rail_half"]
-        over = max(0.0, abs(x) - 0.7 * rail_half)
-        r_rail = -0.5 * (over / (0.3 * rail_half)) ** 2
-        lift = max(0.0, foot_z - FOOT_RADIUS - self.cfg["foot_free"]) if self.cfg["foot_free"] > 0 else foot_z - FOOT_RADIUS
-        r_foot = -0.5 * (lift / 0.02) ** 2
-        side = max(0.0, abs(foot_y) - self.cfg["lat_free"])
-        r_lat = -0.5 * (side / 0.03) ** 2
-        r_effort = -self.cfg["effort_weight"] * float(np.mean(pull ** 2))
-        k = self._k
-        r_rate = -k * self.cfg["rate_weight"] * float(np.mean((action - self.prev_action[i]) ** 2))
-        r_ten = -self.cfg["tension_weight"] * float(np.mean(force))
-        # Penalise the un-clipped action.  Without this the policy drifts into
-        # bang-bang actions (|a| > 5), clipping removes all command magnitude
-        # information, and the leg pumps at one fixed amplitude.
-        r_action_l2 = -self.cfg["action_l2_weight"] * float(np.mean(action_raw ** 2))
-
-        # ---- reward v2: smoothness and damage costs (all scaled by k) ----
-        # Jerk: sudden reversals of the servo targets.  A smooth full-range
-        # 1.5 Hz sine costs ~600x less than one spike of the baseline policy.
-        if self.t[i] >= 3:
-            accel = action - 2.0 * self.prev_action[i] + self.prev_action2[i]
-            r_accel = -k * self.cfg["accel_weight"] * float(np.mean(accel ** 2))
-        else:
-            r_accel = 0.0
-        # Tension shock: change in cable tension over one control step,
-        # 10 % of the force limit (20 N) per step counts as 1.
-        tension = -d.actuator_force
-        d_ten = (tension - self.prev_tension[i]) / (0.1 * self.fmax)
-        r_shock = -k * self.cfg["shock_weight"] * float(np.mean(d_ten ** 2))
-        # Soft limits: zero below the soft fraction, 1 per cable / joint at the limit.
-        soft = self.cfg["tension_soft"]
-        t_over = np.clip(self.peak_tension[i] / self.fmax - soft, 0.0, None) / (1.0 - soft)
-        r_tlim = -k * self.cfg["tension_limit_weight"] * float(np.sum(t_over ** 2))
-        soft = self.cfg["bend_soft"]
-        b_over = np.clip(bend / self.cfg["bend_limit"] - soft, 0.0, None) / (1.0 - soft)
-        r_blim = -k * self.cfg["bend_limit_weight"] * float(np.sum(b_over ** 2))
-        # Foot impact: peak foot force above twice the static load, in units of the static load.
-        f_static = self.cfg["foot_static_force"]
-        f_over = max(0.0, float(self.peak_foot_force[i]) - 2.0 * f_static) / f_static
-        r_impact = -k * self.cfg["impact_weight"] * f_over ** 2
-        # Foot slip: mean sliding speed while in contact.  Linear and capped:
-        # the squared form let one touchdown skid outweigh the failure penalty.
         slip = float(self.slip_sum[i] / self.slip_n[i]) if self.slip_n[i] > 0 else 0.0
-        r_slip = -k * self.cfg["slip_weight"] * min(slip / self.cfg["slip_scale"],
-                                                    self.cfg["slip_cap"])
 
-        reward = (
-            self.cfg["vel_weight"] * r_vel
-            + r_vel_l2
-            + self.cfg["progress_weight"] * r_prog
-            + self.cfg["rail_weight"] * r_rail
-            + self.cfg["foot_weight"] * r_foot
-            + self.cfg["lat_weight"] * r_lat
-            + r_effort + r_rate + r_ten + r_action_l2
-            + r_accel + r_shock + r_tlim + r_blim + r_impact + r_slip
+        state = rewards.StepState(
+            t=int(self.t[i]), cmd=cmd, vx=vx, v_track=v_track, x=x,
+            foot_z=foot_z, foot_y=foot_y, bend=bend,
+            pull=(self.l0 - d.ctrl) / self.stroke,
+            force=-d.actuator_force / self.fmax,
+            tension=-d.actuator_force, prev_tension=self.prev_tension[i],
+            peak_tension=self.peak_tension[i], fmax=self.fmax,
+            action=action, action_raw=action_raw,
+            prev_action=self.prev_action[i], prev_action2=self.prev_action2[i],
+            foot_force_peak=float(self.peak_foot_force[i]), slip=slip,
         )
-        clipped = False
-        if self.cfg["bound_costs"]:
-            # The smoothness/damage costs may pull a step down to zero but not
-            # below, so they never make failing early worth more than surviving.
-            # The original terms are left exactly as they were.
-            costs = -(r_rate + r_accel + r_shock + r_tlim + r_blim + r_impact + r_slip)
-            base = reward + costs
-            applied = min(costs, max(base, 0.0))
-            clipped = applied < costs
-            reward = base - applied
+        reward, parts, clipped = rewards.total(state, self.cfg, self._k)
+        rail_half = self.cfg["rail_half"]
         failed = (
             foot_z > self.cfg["foot_lift_limit"]
             or bend.max() > self.cfg["bend_limit"]
@@ -772,14 +716,9 @@ class SingleLegRigEnv:
         if failed:
             reward -= self.cfg["failure_penalty"]
         info = {
-            "vx": vx, "x": x, "cmd": cmd, "err": abs(err),
+            "vx": vx, "v_track": v_track, "x": x, "cmd": cmd, "err": abs(v_track - cmd),
             "foot_z": foot_z, "foot_y": foot_y, "bend": float(bend.max()),
-            "r_vel": r_vel, "r_vel_l2": r_vel_l2, "r_prog": r_prog, "r_rail": r_rail,
-            "r_foot": r_foot, "r_lat": r_lat,
-            "r_effort": r_effort, "r_rate": r_rate, "r_ten": r_ten,
-            "r_action_l2": r_action_l2,
-            "r_accel": r_accel, "r_shock": r_shock, "r_tlim": r_tlim, "r_blim": r_blim,
-            "r_impact": r_impact, "r_slip": r_slip,
+            **{f"r_{name}": value for name, value in parts.items()},
             "tension_peak": float(self.peak_tension[i].max()),
             "foot_force_peak": float(self.peak_foot_force[i]), "slip": slip,
             "clipped": float(clipped),
@@ -902,12 +841,7 @@ class SingleLegRigEnv:
         failed = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros_like(self.obs)
         final_critic = np.zeros_like(self.critic_obs)
-        keys = ("vx", "x", "cmd", "err", "foot_z", "foot_y", "bend",
-                "r_vel", "r_vel_l2", "r_prog", "r_rail", "r_foot", "r_lat",
-                "r_effort", "r_rate", "r_ten", "r_action_l2",
-                "r_accel", "r_shock", "r_tlim", "r_blim", "r_impact", "r_slip",
-                "tension_peak", "foot_force_peak", "slip", "clipped")
-        log = {k: np.zeros(self.num_envs) for k in keys}
+        log: dict[str, np.ndarray] = {}
 
         self._k = self._curriculum()
         for i in range(self.num_envs):
@@ -917,8 +851,10 @@ class SingleLegRigEnv:
             reward[i] = r
             failed[i] = fail
             done[i] = fail or (self.t[i] >= self.max_episode_length)
-            for k in keys:
-                log[k][i] = info[k]
+            for k, v in info.items():
+                if k not in log:
+                    log[k] = np.zeros(self.num_envs)
+                log[k][i] = v
             self.prev_action2[i] = self.prev_action[i]
             self.prev_action[i] = action[i]
             self.prev_tension[i] = -self.datas[i].actuator_force
@@ -954,11 +890,12 @@ class SingleLegRigEnv:
                 "/foot_y_mean": float(np.abs(log["foot_y"]).mean()),
                 "/bend_max": float(log["bend"].max()),
                 "/failed": float(failed.mean()),
-                **{f"/{k}": float(log[k].mean()) for k in
-                   ("r_vel", "r_vel_l2", "r_prog", "r_rail", "r_foot", "r_lat",
-                    "r_effort", "r_rate", "r_ten", "r_action_l2",
-                    "r_accel", "r_shock", "r_tlim", "r_blim", "r_impact", "r_slip",
-                    "slip", "clipped")},
+                # every reward term, weighted (they sum to the reward before the
+                # bounded-cost cap and the failure penalty)
+                **{f"/{k}": float(v.mean()) for k, v in log.items() if k.startswith("r_")},
+                "/v_track_mean": float(log["v_track"].mean()),
+                "/slip": float(log["slip"].mean()),
+                "/clipped": float(log["clipped"].mean()),
                 "/curriculum_k": self._k,
                 "/tension_peak_max": float(log["tension_peak"].max()),
                 "/foot_force_peak_max": float(log["foot_force_peak"].max()),
