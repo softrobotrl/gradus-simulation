@@ -4,14 +4,15 @@
     python -m single_leg_demo.reward_check.preference --set accel_weight=1.0
     python -m single_leg_demo.reward_check.preference --compare v1 v4
 
-Four behaviours run on the same physics: the scripted walk (reward_check.gait),
+Five behaviours run on the same physics: the scripted walk (reward_check.gait),
 the same walk jumping between keyframes (jerky), the walk plus action noise
-(noisy, like PPO exploring), and standing still.  The costs run at full
+(noisy, like PPO exploring), the walk for 1 s then frozen for 1 s, repeated
+(burst: what PPO fine-tunes drifted into under v4), and standing still.  The costs run at full
 strength (curriculum k = 1, as at the end of training).
 
 A reward worth training must score the walk above standing still (else
 FAIL: training will find standing).  It should also score the walk above the
-noisy and jerky walks (else WARN: the smoothness costs do not separate them).
+noisy, jerky and burst walks (else WARN: the reward does not separate them).
 If the scripted walk itself does not cover the distance on these physics
 (e.g. too much rail friction), the test cannot judge the reward (INCONCLUSIVE).
 
@@ -31,7 +32,8 @@ from single_leg_demo import rewards
 from single_leg_demo.reward_check.gait import ScriptedGait
 from single_leg_demo.rig_env import FOOT_RADIUS, RigConfig, SingleLegRigEnv
 
-BEHAVIOURS = ("scripted gait", "jerky gait", "noisy gait", "stand still")
+BEHAVIOURS = ("scripted gait", "jerky gait", "noisy gait", "burst gait", "stand still")
+BURST = 50           # control steps (1 s) of walking, then as many holding still
 NOISE = 0.3          # action noise std of the noisy walk
 
 
@@ -61,6 +63,8 @@ def run_behaviour(cfg: RigConfig, behaviour: str, seed: int = 0) -> dict:
         for t in range(steps):
             if behaviour == "stand still":
                 a = np.zeros(env.num_actions)
+            elif behaviour == "burst gait" and (t // BURST) % 2 == 1:
+                pass                                # hold the last action: the leg freezes
             else:
                 a = gait.action(env, 0)
                 if behaviour == "noisy gait":
@@ -86,14 +90,14 @@ def run_behaviour(cfg: RigConfig, behaviour: str, seed: int = 0) -> dict:
 
 
 def score(cfg: RigConfig, workers: int = 4) -> dict:
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with ProcessPoolExecutor(max_workers=max(workers, len(BEHAVIOURS))) as pool:
         futures = {b: pool.submit(run_behaviour, cfg, b) for b in BEHAVIOURS}
         return {b: f.result() for b, f in futures.items()}
 
 
 def verdict(res: dict) -> tuple[str, str]:
     walk, jerky = res["scripted gait"], res["jerky gait"]
-    noisy, stand = res["noisy gait"], res["stand still"]
+    noisy, stand, burst = res["noisy gait"], res["stand still"], res["burst gait"]
     if walk["distance"] < 0.5:
         return "INCONCLUSIVE", (f"the scripted walk covered only {walk['distance']:.0%} of the "
                                 "asked distance on these physics, so this cannot tell whether "
@@ -106,10 +110,12 @@ def verdict(res: dict) -> tuple[str, str]:
         notes.append("the noisy walk scores at least as much as the smooth walk")
     if jerky["reward"] >= walk["reward"]:
         notes.append("the jerky walk scores at least as much as the smooth walk")
+    if burst["reward"] >= walk["reward"]:
+        notes.append("walking in bursts with pauses scores at least as much as walking steadily")
     if notes:
         return "WARN", "; ".join(notes)
     return "PASS", (f"walk beats standing by {walk['reward'] - stand['reward']:+.3f}/step, "
-                    "and beats the jerky and noisy walks")
+                    "and beats the jerky, noisy and burst walks")
 
 
 def main() -> None:

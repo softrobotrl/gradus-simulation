@@ -135,6 +135,12 @@ class RigConfig:
     # average is right, and the squared velocity term then scores any gait
     # below standing still.  0 = instantaneous speed (v1-v3).
     vel_avg_tau: float = 0.0
+    # Reward v5: idling cost.  The 1 s average above lets a policy push hard
+    # for a moment and then stand still.  `idle` charges the shortfall of the
+    # speed averaged over a shorter window (idle_tau s) from the command, so
+    # long pauses cost even when the 1 s average is close.  0 = off (v1-v4).
+    idle_weight: float = 0.0
+    idle_tau: float = 0.5
     # Rail (carriage) dry friction in N; < 0 keeps the value in rig.xml (0.2 N).
     rail_friction: float = -1.0
 
@@ -340,6 +346,7 @@ class SingleLegRigEnv:
         self.cmd_raw = np.zeros(cfg.num_envs, dtype=np.float64)
         self.prev_tension = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
         self.vx_avg = np.zeros(cfg.num_envs, dtype=np.float64)
+        self.vx_idle = np.zeros(cfg.num_envs, dtype=np.float64)
         self.peak_tension = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
         self.peak_foot_force = np.zeros(cfg.num_envs, dtype=np.float64)
         self.slip_sum = np.zeros(cfg.num_envs, dtype=np.float64)
@@ -652,6 +659,7 @@ class SingleLegRigEnv:
         self.prev_action2[i] = 0.0
         self.prev_tension[i] = -d.actuator_force
         self.vx_avg[i] = float(d.qvel[0])
+        self.vx_idle[i] = float(d.qvel[0])
         self.cmd_mag[i] = (self.rng.uniform(self.cfg["cmd_min"], self.cfg["cmd_max"])
                            if randomize else self.cfg["cmd_min"])
         self.cmd_sign0[i] = 1.0 if self.rng.random() < 0.5 else -1.0
@@ -692,10 +700,12 @@ class SingleLegRigEnv:
         else:
             self.vx_avg[i] = vx
         v_track = float(self.vx_avg[i])
+        tau_idle = self.cfg["idle_tau"]
+        self.vx_idle[i] += (min(1.0, self.dt / tau_idle) if tau_idle > 0.0 else 1.0) * (vx - self.vx_idle[i])
         slip = float(self.slip_sum[i] / self.slip_n[i]) if self.slip_n[i] > 0 else 0.0
 
         state = rewards.StepState(
-            t=int(self.t[i]), cmd=cmd, vx=vx, v_track=v_track, x=x,
+            t=int(self.t[i]), cmd=cmd, vx=vx, v_track=v_track, v_idle=float(self.vx_idle[i]), x=x,
             foot_z=foot_z, foot_y=foot_y, bend=bend,
             pull=(self.l0 - d.ctrl) / self.stroke,
             force=-d.actuator_force / self.fmax,

@@ -1,4 +1,4 @@
-"""Reward for the single-leg rig: the terms, the presets (v1-v4), and overrides.
+"""Reward for the single-leg rig: the terms, the presets (v1-v5), and overrides.
 
 Read REWARD.md first if you are changing the reward.  In short:
 
@@ -44,6 +44,7 @@ class StepState:
     cmd: float                 # commanded carriage speed (m/s, signed)
     vx: float                  # instantaneous carriage speed (m/s)
     v_track: float             # speed the velocity terms score (vx, or its ~1 s average under v4)
+    v_idle: float              # vx averaged over idle_tau (~0.5 s), for the idle term
     x: float                   # carriage position on the rail (m, 0 = centre)
     foot_z: float              # foot centre height (m); foot radius is FOOT_RADIUS
     foot_y: float              # foot sideways offset from the rail line (m)
@@ -90,6 +91,22 @@ def prog(s: StepState, c: dict) -> float:
         return 0.0
     denom = math.copysign(max(abs(s.cmd), c["cmd_min"]), s.cmd)
     return float(np.clip(s.v_track / denom, 0.0, 1.5))
+
+
+def idle(s: StepState, c: dict) -> float:
+    """Idling: shortfall of the ~0.5 s average speed from the command, 0..1.
+
+    0 when the carriage keeps up with the command over the last idle_tau
+    seconds, 1 when it stands still or goes the wrong way.  Without it, a
+    policy can push hard for a moment and then idle, and the 1 s average
+    still scores close to the command.  Calibration (3 N rail, 0.07 m/s): the
+    scripted walk and its clone average 0.22, policies that visibly idle
+    0.47-0.57, a policy that stopped 0.99.
+    """
+    if abs(s.cmd) <= 1e-6:
+        return 0.0
+    denom = math.copysign(max(abs(s.cmd), c["cmd_min"]), s.cmd)
+    return -float(np.clip(1.0 - s.v_idle / denom, 0.0, 1.0))
 
 
 def rail(s: StepState, c: dict) -> float:
@@ -205,6 +222,8 @@ TERMS: tuple[Term, ...] = (
     Term("blim", blim, "bend_limit_weight", curriculum=True, bounded=True),
     Term("impact", impact, "impact_weight", curriculum=True, bounded=True),
     Term("slip", slip, "slip_weight", curriculum=True, bounded=True),
+    # v5
+    Term("idle", idle, "idle_weight"),
 )
 
 
@@ -212,7 +231,7 @@ TERMS: tuple[Term, ...] = (
 # observations or when an episode ends).  reward_check.lockstep varies only
 # these between its two envs, so both see exactly the same motion.
 REWARD_FIELDS: frozenset[str] = frozenset({t.weight for t in TERMS} | {
-    "vel_sigma", "vel_avg_tau", "lat_free", "foot_free", "tension_soft", "bend_soft",
+    "vel_sigma", "vel_avg_tau", "idle_tau", "lat_free", "foot_free", "tension_soft", "bend_soft",
     "foot_static_force", "slip_scale", "slip_cap", "bound_costs",
     "curriculum_k0", "curriculum_kd", "failure_penalty", "reward_preset",
 })
@@ -258,6 +277,10 @@ PRESETS: dict[str, dict] = {
     # the carriage in pulses, and scoring the instantaneous speed ranks every
     # gait below standing still.  vel_sigma 0.03 is the value v4 was tested with.
     "v4": {"lat_free": 0.10, "foot_free": 0.03, "vel_avg_tau": 1.0, "vel_sigma": 0.03},
+    # v5: v4 + a cost for idling (pushing hard, then standing still), which
+    # v4's 1 s average let KL fine-tunes of the clone drift into.
+    "v5": {"lat_free": 0.10, "foot_free": 0.03, "vel_avg_tau": 1.0, "vel_sigma": 0.03,
+           "idle_weight": 1.0, "idle_tau": 0.5},
 }
 DEFAULT_PRESET = "v4"
 

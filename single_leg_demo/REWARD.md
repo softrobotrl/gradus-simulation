@@ -27,7 +27,7 @@ reward = Σ over terms  weight × k × term(state)
 The reward runs only in training, so it may use simulator-only quantities (true
 carriage speed, foot contact force) that the real robot cannot measure.
 
-**Presets** `v1` to `v4` are named sets of weights (`PRESETS` in rewards.py),
+**Presets** `v1` to `v5` are named sets of weights (`PRESETS` in rewards.py),
 chosen with `train.py --reward`.  The default is `v4`.
 
 ## The current reward (v4)
@@ -58,6 +58,18 @@ and ends the episode.
 The **scored speed** is the carriage speed averaged over about one stride
 (`vel_avg_tau` 1 s).  This is the key v4 change: one leg moves the carriage in
 pulses, and scoring the instantaneous speed ranked every gait below standing still.
+
+### v5 (experimental): v4 plus an idling cost
+
+| Term | Rewards or penalises | Weight field | v5 value |
+|---|---|---|---|
+| `idle` | shortfall of the speed averaged over `idle_tau` 0.5 s from the command, 0..1 | `idle_weight` | 1.0 |
+
+Why: the 1 s average lets a policy push hard for a moment and then stand
+still, and still score close to the command.  PPO fine-tunes of the clone
+drifted into exactly that under v4 (still 60 to 78 % of each pass).  On the
+3 N rail the scripted walk and its clone average a shortfall of about 0.22;
+the idling policies 0.47 to 0.57.
 
 TensorBoard logs each term's weighted value as `/r_<name>`; they sum to
 `/reward_mean` before the bounded-cost cap and the failure penalty.  `/clipped`
@@ -104,12 +116,39 @@ python -m unittest tests.test_single_leg_demo
 ```
 
 - **Preference test** (about 3 s): scores a scripted walk, a jerky walk, a noisy
-  walk and standing still.  The walk must beat standing (else FAIL: training
-  will find standing), and should beat the jerky and noisy walks (else WARN).
+  walk, a burst walk (1 s walking, 1 s frozen, repeated) and standing still.
+  The walk must beat standing (else FAIL: training will find standing), and
+  should beat the jerky, noisy and burst walks (else WARN).
 - **Lockstep scoring:** scores trained checkpoints under two rewards on exactly
   the same motion, plus reward-free measures (distance covered / asked, foot
   lifts).  A good reward ranks policies by how well they do the task.
 - The unit tests include the preference test: v4 must pass and v1 must fail.
+
+## Compare rewards by fine-tuning the clone
+
+PPO from scratch has not found a gait, so it cannot tell rewards apart.
+Instead, start every reward from the same behaviour clone of the scripted
+walk ([clone.py](clone.py)) and see whether the reward improves the gait,
+keeps it, or turns it into something worse.  Keep everything but the reward
+fixed, and run 3 seeds:
+
+```
+python -m single_leg_demo.train --resume logs/single_leg_demo/clone_hw/model_0.pt \
+    --run-name ft_v5_s0 --reward v5 --seed 0 --dr --rail-friction 3 \
+    --cmd-min 0.05 --cmd-max 0.08 --actor-freeze 30 --warmup 0 --iterations 300 \
+    --kl-clone 1.0 --kl-half-life 300 --kl-floor 0.3
+python -m single_leg_demo.reward_check.passes --group --label v5 \
+    logs/single_leg_demo/ft_v5_s*/model_300.pt
+```
+
+- The KL anchor (`--kl-clone`) stops PPO from losing the gait in the first
+  iterations.  It also hides reward flaws, so use the same anchor for every
+  reward you compare, with a floor so it never fades to zero.
+- Judge with [passes.py](reward_check/passes.py) (time moving, still, wrong
+  way; distance per pass; rail-end failures), then watch the finalists.  A
+  single averaged distance hides a policy that pushes and then idles.
+- This tests whether a reward keeps and refines a gait, not whether it can
+  discover one from scratch.
 
 ## Lessons so far
 
@@ -124,6 +163,9 @@ python -m unittest tests.test_single_leg_demo
 - **Costs on action changes also charge PPO's exploration noise** (action std
   about 0.5).  Watch `/r_accel` and `/clipped` early in a run: if the costs
   grow with k while the policy is not changing, they are mostly pricing noise.
+- **Judge gaits per pass, not by total distance.**  A KL fine-tune under v4
+  reached 93 % of the asked distance while standing still 60 to 78 % of each
+  pass.  It looked idle on video; the averaged number looked fine.
 - **Do not punish the side swing.**  The foot touches the floor anywhere within
   about 4 cm of under the hip, so a step has to swing around the side (why
   `lat_free` and `foot_free` exist).

@@ -22,6 +22,7 @@ import torch
 from rsl_rl.runners import OnPolicyRunner
 
 from single_leg_demo import rewards
+from single_leg_demo.clone import install_clone_kl
 from single_leg_demo.rig_env import RigConfig, SingleLegRigEnv
 
 
@@ -103,7 +104,15 @@ def main() -> None:
                    help="reward preset (rewards.py): v1 = the original reward; "
                         "v2 = ramped command + smoothness/damage costs with a curriculum; "
                         "v3 = v2 + free bands so the foot may lift and swing around the side; "
-                        "v4 = v3 + speed averaged over ~one stride (default)")
+                        "v4 = v3 + speed averaged over ~one stride (default); "
+                        "v5 = v4 + a cost for idling (bursts then pauses)")
+    p.add_argument("--kl-clone", type=float, default=0.0, metavar="BETA",
+                   help="with --resume from a clone (clone.py): add BETA * KL(clone || policy) "
+                        "to the PPO loss so fine-tuning cannot drift far from the clone")
+    p.add_argument("--kl-half-life", type=float, default=300.0,
+                   help="iterations for the KL weight to halve (0 = constant)")
+    p.add_argument("--kl-floor", type=float, default=0.0,
+                   help="the KL weight never decays below this")
     p.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE",
                    help="set any RigConfig field, e.g. --set accel_weight=1.0 "
                         "(repeatable; applied after --reward and the flags below)")
@@ -182,6 +191,12 @@ def main() -> None:
         print(f"* resumed {args.resume} at iteration {runner.current_learning_iteration}")
         # keep the cost curriculum where the checkpoint left it
         env.env_steps = runner.current_learning_iteration * args.steps_per_env
+    if args.kl_clone > 0:
+        if not args.resume:
+            raise SystemExit("--kl-clone needs --resume (the checkpoint to stay close to)")
+        install_clone_kl(runner.alg, args.kl_clone, args.kl_half_life, args.kl_floor)
+        print(f"* KL anchor to {args.resume}: beta {args.kl_clone}, half-life "
+              f"{args.kl_half_life} iterations, floor {args.kl_floor} (logged as Loss/symmetry)")
     if args.entropy_coef is not None:
         runner.alg.entropy_coef = args.entropy_coef
     if args.learning_rate is not None:

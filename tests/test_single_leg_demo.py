@@ -338,10 +338,22 @@ class RewardBehaviourTests(unittest.TestCase):
         # The core check behind reward v4 (REWARD.md): scored on the same physics,
         # v4 must rank the scripted walk above standing still; v1 did the opposite.
         from single_leg_demo.reward_check import preference as pref
-        for preset, want in (("v4", "PASS"), ("v1", "FAIL")):
+        for preset, want in (("v4", "PASS"), ("v5", "PASS"), ("v1", "FAIL")):
             cfg = pref.make_config(preset, [], rail=3.0, cmd=0.07, period=4.0, steps=600)
             label, why = pref.verdict(pref.score(cfg))
             self.assertEqual(label, want, f"{preset}: {why}")
+
+    def test_idle_term(self):
+        # v5's idle cost: 0 when the ~0.5 s average speed keeps up with the
+        # command, -1 when standing or going the wrong way, 0 with no command.
+        from dataclasses import fields
+        from single_leg_demo import rewards
+        s = rewards.StepState(**{f.name: 0 for f in fields(rewards.StepState)})
+        c = {"cmd_min": 0.05}
+        for cmd, v, want in ((0.07, 0.07, 0.0), (0.07, 0.10, 0.0), (0.07, 0.0, -1.0),
+                             (0.07, -0.05, -1.0), (-0.07, -0.035, -0.5), (0.0, 0.0, 0.0)):
+            s.cmd, s.v_idle = cmd, v
+            self.assertAlmostEqual(rewards.idle(s, c), want, places=6)
 
 
 if __name__ == "__main__":
