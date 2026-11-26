@@ -35,7 +35,7 @@ import torch
 from tensordict import TensorDict
 
 from single_leg_demo import rewards
-from single_leg_demo.reward_check.gait import ScriptedGait
+from single_leg_demo.reward_check.gait import SagittalGait, ScriptedGait
 from single_leg_demo.rig_env import RigConfig, SingleLegRigEnv
 
 
@@ -100,7 +100,8 @@ def collect_config(args) -> RigConfig:
     cfg = RigConfig(num_envs=args.num_envs, num_threads=args.num_threads,
                     episode_steps=args.episode_steps, cmd_min=args.cmd_min, cmd_max=args.cmd_max,
                     cmd_period=args.cmd_period, rail_friction=args.rail_friction,
-                    dr_enabled=args.dr, seed=args.seed)
+                    dr_enabled=args.dr, seed=args.seed, servo_layout=args.servo_layout,
+                    servo_torque=args.servo_torque)
     rewards.apply_preset(cfg, args.reward)       # the critic's inputs include the scored speed
     rewards.apply_overrides(cfg, args.set)
     cfg.obs_cmd_scale = cfg.cmd_max               # as train.py
@@ -111,7 +112,7 @@ def collect(args) -> None:
     cfg = collect_config(args)
     env = SingleLegRigEnv(cfg)
     env.reset()
-    gait = ScriptedGait(env.num_envs)
+    gait = (SagittalGait if args.gait == "sagittal" else ScriptedGait)(env.num_envs)
     rng = np.random.default_rng(args.seed + 1)
     obs, critic, act = [], [], []
     moved = asked = 0.0
@@ -216,6 +217,10 @@ def main() -> None:
     c.add_argument("--cmd-period", type=float, default=4.0)
     c.add_argument("--rail-friction", type=float, default=-1.0, help="N; < 0 keeps rig.xml")
     c.add_argument("--dr", action="store_true", help="domain randomization at full range")
+    c.add_argument("--gait", choices=("sagittal", "sideswing"), default="sagittal",
+                   help="sagittal: forward/back walk for the 4-servo leg; sideswing: the 8-servo walk")
+    c.add_argument("--servo-layout", default="paired_x", choices=("paired_x", "independent"))
+    c.add_argument("--servo-torque", type=float, default=4.0, help="N*m; 0 keeps rig.xml (8-servo runs)")
     c.add_argument("--noise", type=float, default=0.15, help="action noise on the executed action")
     c.add_argument("--reward", default=rewards.DEFAULT_PRESET, choices=sorted(rewards.PRESETS))
     c.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE")

@@ -39,7 +39,11 @@ NOISE = 0.3          # action noise std of the noisy walk
 
 def make_config(preset: str, overrides: list[str], rail: float, cmd: float, period: float,
                 steps: int) -> RigConfig:
-    c = RigConfig(num_envs=1, num_threads=1, episode_steps=steps, cmd_min=cmd, cmd_max=cmd,
+    # The scripted walk swings the foot sideways, which the confirmed 4-servo
+    # leg cannot do, so the test still runs on the 8-servo rig (it judges the
+    # reward, not the leg).  TODO: a forward/back-only scripted walk.
+    c = RigConfig(servo_layout="independent", servo_torque=0.0,
+                  num_envs=1, num_threads=1, episode_steps=steps, cmd_min=cmd, cmd_max=cmd,
                   cmd_period=period, cmd_period_jitter=0.0, cmd_resample=False,
                   reset_noise=0.0, rail_friction=rail, obs_cmd_scale=max(0.08, cmd))
     rewards.apply_preset(c, preset)

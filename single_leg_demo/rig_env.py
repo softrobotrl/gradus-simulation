@@ -7,11 +7,12 @@ itself with the eight tendon servos to push the carriage back and forth.
 Two observation groups (see ``single_leg_demo/STATES.md``):
 
 * ``policy`` (actor, runs on hardware) with ``obs_mode="hardware"``: only what
-  the real rig can know, 41 values per control step, last ``obs_history``
-  steps stacked oldest first:
+  the real rig can know, last ``obs_history`` steps stacked oldest first:
   target velocity (1), phase sin/cos (2), previous action (8), last servo
-  targets sent (8), servo positions (8), servo loads (8), rail IMU
-  accelerometer (3) and gyro (3).
+  targets sent (8), servo encoder positions (8), servo loads (8, only with
+  ``servo_load_obs``), rail IMU accelerometer (3) and gyro (3): 33 values per
+  control step, 41 with loads.  The confirmed hardware (2026-11-25) uses PWM
+  servos, which report no load, and AS5600 encoders (``encoder_counts_per_rev``).
 * ``critic`` (training only): the full 115-value simulator state, i.e.
   slider position/velocity, target velocity, phase, 13 ball-joint rotation
   vectors and velocities, tendon lengths, tendon forces, servo targets and
@@ -47,7 +48,44 @@ from single_leg_demo import rewards
 N_BALL = 13
 N_TENDON = 8
 FOOT_RADIUS = rewards.FOOT_RADIUS
-HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step
+HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step with servo loads
+
+
+def hw_frame_size(servo_load_obs: bool, n_servo: int = N_TENDON) -> int:
+    """Values per hardware observation step (see STATES.md): command and
+    phase (3), then per servo: previous action, target sent, encoder position
+    (and load), then the rail IMU (6)."""
+    return 3 + n_servo * (4 if servo_load_obs else 3) + 6
+
+
+SERVO_LAYOUTS = ("independent", "paired_x")
+
+
+def servo_groups(m, layout: str) -> np.ndarray:
+    """Servo index of each tendon actuator.
+
+    ``independent``: one servo per tendon (8, runs before 2026-11-26).
+    ``paired_x``: the confirmed leg, 4 double-spool servos.  Each spool pulls
+    the two cables of one ring on one side of the travel direction (+X or -X).
+    The holes sit at 45 degrees to the rail, so the two cables' sideways pulls
+    cancel: the leg bends forward and back only.  Servo order: inner +X,
+    inner -X, outer +X, outer -X.
+    """
+    if layout == "independent":
+        return np.arange(m.nu)
+    if layout != "paired_x":
+        raise ValueError(f"servo_layout must be one of {SERVO_LAYOUTS}, got {layout!r}")
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    groups = np.zeros(m.nu, dtype=int)
+    for a in range(m.nu):
+        t = int(m.actuator_trnid[a, 0])
+        x = float(d.site_xpos[m.wrap_objid[m.tendon_adr[t]]][0] - d.site_xpos[m.site("tip").id][0])
+        ring = 0 if "inner" in m.tendon(t).name else 1
+        groups[a] = 2 * ring + (0 if x > 0 else 1)
+    if sorted(np.bincount(groups, minlength=4)) != [2, 2, 2, 2]:
+        raise RuntimeError(f"paired_x expects 2 cables per servo, got {groups}")
+    return groups
 GRAVITY = 9.81
 CMD_BUF = 3          # sent commands kept for the control delay (max 2 steps = 40 ms)
 
@@ -71,6 +109,22 @@ class RigConfig:
 
     # Observations (see STATES.md).
     obs_mode: str = "hardware"       # "hardware": actor sees sensors only; "full": legacy 115-d
+    # Confirmed hardware (2026-11-25): PWM servos report no load, so the actor
+    # gets no load reading.  True = the 41-value frame of earlier runs.
+    servo_load_obs: bool = False
+    # Confirmed hardware: 4 double-spool servos per leg (servo_groups).
+    # "independent" = one servo per tendon (8 actions, runs before 2026-11-26).
+    servo_layout: str = "paired_x"
+    # Servo torque (N*m) -> pull limit per cable = torque / spool_radius /
+    # cables per servo.  ANNIMOS 80 kg (rated stall 80 kg*cm, about 7.8 N*m);
+    # 4.0 assumes about half the rating is usable, and gives 200 N per cable,
+    # the value in rig.xml.  0 = keep rig.xml's limit.
+    servo_torque: float = 4.0
+    # AS5600 magnetic encoder on the spool: 4096 counts per revolution.  The
+    # position reading is rounded to whole counts (always, not only with DR).
+    # 0 = no rounding (runs before 2026-11-26).
+    encoder_counts_per_rev: int = 4096
+    spool_radius: float = 0.010       # m; cable pulled per radian of spool turn
     obs_history: int = 8             # hardware steps stacked for the actor
     gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro (clipped at ±2)
     acc_clip: float = 3.0            # g, rail IMU accelerometer clip
@@ -188,7 +242,7 @@ class RigConfig:
     dr_acc_bias: float = 0.03                # ± g, per episode
     dr_gyro_noise: float = 0.01              # rad/s, per step
     dr_gyro_bias: float = 0.02               # ± rad/s, per episode
-    dr_servo_counts: int = 2048              # encoder steps over the full stroke
+    dr_servo_counts: int = 2048              # unused since encoder_counts_per_rev (kept so old configs load)
     dr_pos_noise: float = 0.002              # servo position, fraction of stroke
     dr_load_noise: float = 0.03              # servo load, fraction of max force
     dr_load_scale: tuple = (0.8, 1.2)        # × load reading, per servo
@@ -250,7 +304,6 @@ class SingleLegRigEnv:
         self.cfg = asdict(cfg)
         self.device = "cpu"
         self.num_envs = cfg.num_envs
-        self.num_actions = N_TENDON
         self.max_episode_length = cfg.episode_steps
         self.n_substeps = cfg.n_substeps
         self.dt = cfg.control_dt
@@ -263,6 +316,17 @@ class SingleLegRigEnv:
         self.nq, self.nv, self.nu = m.nq, m.nv, m.nu
         if self.nu != N_TENDON:
             raise RuntimeError(f"expected {N_TENDON} tendon actuators, model has {self.nu}")
+        # servo of each tendon actuator; the policy drives servos, not tendons
+        self.servo_of = servo_groups(m, cfg.servo_layout)
+        self.n_servo = int(self.servo_of.max()) + 1
+        self.num_actions = self.n_servo
+        self.cables_per_servo = np.bincount(self.servo_of)[self.servo_of]
+        self.first_cable = np.array([np.flatnonzero(self.servo_of == s)[0] for s in range(self.n_servo)])
+        # the two cables of each double spool (paired layouts only)
+        self.cable_pairs = (np.array([np.flatnonzero(self.servo_of == s) for s in range(self.n_servo)])
+                            if self.n_servo != N_TENDON else None)
+        if cfg.servo_torque > 0:
+            m.actuator_forcerange[:, 0] = -cfg.servo_torque / cfg.spool_radius / self.cables_per_servo
 
         self.l0 = m.actuator_ctrlrange[:, 1].copy()
         self.stroke = (m.actuator_ctrlrange[:, 1] - m.actuator_ctrlrange[:, 0]).copy()
@@ -338,8 +402,8 @@ class SingleLegRigEnv:
                                  (cfg.num_envs, 1))
         # sent commands: [this step, 1 step ago, 2 steps ago], for the control delay
         self.cmd_buf = np.repeat(self.servo_cmd[:, None, :], CMD_BUF, axis=1)
-        self.prev_action = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
-        self.prev_action2 = np.zeros((cfg.num_envs, N_TENDON), dtype=np.float64)
+        self.prev_action = np.zeros((cfg.num_envs, self.n_servo), dtype=np.float64)
+        self.prev_action2 = np.zeros((cfg.num_envs, self.n_servo), dtype=np.float64)
 
         # Reward v2 state.  cmd is the (ramped) command the policy sees and
         # tracks; cmd_raw is the square-wave target it ramps towards.
@@ -359,9 +423,18 @@ class SingleLegRigEnv:
         self.env_steps = 0  # control steps taken by the whole batch, drives the curriculum
         self._k = self._curriculum()
 
-        self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), HW_FRAME))
+        # encoder counts over one full stroke: counts/rev x stroke / (2 pi r)
+        self.encoder_counts = (cfg.encoder_counts_per_rev * self.stroke / (2 * math.pi * cfg.spool_radius)
+                               if cfg.encoder_counts_per_rev > 0 else None)
+        # encoder counts over the stroke, per servo (both cables of a spool share it)
+        self.servo_counts = (None if self.encoder_counts is None else
+                             self.encoder_counts if self.n_servo == N_TENDON else
+                             (self.encoder_counts[self.cable_pairs[:, 0]]
+                              + self.encoder_counts[self.cable_pairs[:, 1]]) / 2)
+        self.hw_frame = hw_frame_size(cfg.servo_load_obs, self.n_servo)
+        self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), self.hw_frame))
         self.num_critic_obs = int(self._obs_critic(0).shape[0])
-        self.num_obs = (HW_FRAME * self.hist.shape[1] if cfg.obs_mode == "hardware"
+        self.num_obs = (self.hw_frame * self.hist.shape[1] if cfg.obs_mode == "hardware"
                         else int(self._obs_full(0).shape[0]))
         self.obs = np.zeros((cfg.num_envs, self.num_obs), dtype=np.float32)
         self.critic_obs = np.zeros((cfg.num_envs, self.num_critic_obs), dtype=np.float32)
@@ -400,35 +473,56 @@ class SingleLegRigEnv:
         period = max(self.cmd_period[i], 1e-3)
         return float((self.t[i] * self.dt / period) % 1.0)
 
-    def _hw_frame(self, i: int) -> np.ndarray:
-        """One step of what the real rig can know (41 values, see STATES.md).
+    def _obs_noise(self, i: int) -> np.ndarray | None:
+        """Env i's sensor noise for one observation step, in the order the
+        policy input lists the sensors (acc 3, gyro 3, position, load), or
+        None without randomization.  Drawn per env, in env order, so the
+        random stream does not depend on how the frames are then computed."""
+        if not self.cfg["dr_enabled"]:
+            return None
+        return self.rng.standard_normal(6 + 2 * self.n_servo)
+
+    def _hw_frames(self, idx: np.ndarray, noise: list) -> np.ndarray:
+        """One step of what the real rig can know, for envs ``idx`` (33 values
+        per env, 41 with loads; STATES.md).
 
         Called after the physics step, so ``servo_cmd`` is the servo target
         that was sent for the last 20 ms, and ``prev_action`` is the policy
         output that produced it.
         """
-        d = self.datas[i]
-        phase = self._phase(i)
-        target = np.clip((self.l0 - self.servo_cmd[i]) / self.stroke, 0.0, 1.0)
+        datas = [self.datas[i] for i in idx]
+        ctrl = np.array([d.ctrl for d in datas])
+        ten_length = np.array([d.ten_length for d in datas])
+        force = np.array([d.actuator_force for d in datas])
+        sens = np.array([d.sensordata for d in datas])
+        target = np.clip((self.l0 - self.servo_cmd[idx]) / self.stroke, 0.0, 1.0)
         # Servo spool position: the servo heads for its rate-limited setpoint
         # (d.ctrl); a taut tendon holds the spool short of it, a slack tendon
         # lets it get there.
-        setpoint = (self.l0 - d.ctrl) / self.stroke
-        taut = (self.l0 - d.ten_length) / self.stroke
+        setpoint = (self.l0 - ctrl) / self.stroke
+        taut = (self.l0 - ten_length) / self.stroke
         # encoder reads in the robot's own (possibly mis-calibrated) zero
-        position = np.minimum(taut, setpoint) + self.calib[i] / self.stroke
-        load = -d.actuator_force / self.fmax
-        acc = d.sensordata[self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
-        gyro = d.sensordata[self.imu_gyro_adr:self.imu_gyro_adr + 3].copy()
+        position = np.minimum(taut, setpoint) + self.calib[idx] / self.stroke
+        load = -force / self.fmax
+        if self.n_servo != N_TENDON:
+            # one spool per servo: the tauter cable holds it back, the encoder
+            # reads the spool; the servo carries both cables' tension
+            a, b = self.cable_pairs[:, 0], self.cable_pairs[:, 1]
+            target = (target[:, a] + target[:, b]) / 2
+            position = np.minimum(position[:, a], position[:, b])
+            load = (load[:, a] + load[:, b]) / 2
+        acc = sens[:, self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
+        gyro = sens[:, self.imu_gyro_adr:self.imu_gyro_adr + 3].copy()
         if self.cfg["dr_enabled"]:                   # sensor noise, policy input only
-            s, rng = self.cfg["dr_scale"], self.rng
-            acc = acc + self.acc_bias[i] + rng.normal(0.0, self.cfg["dr_acc_noise"] * s, 3)
-            gyro = gyro + self.gyro_bias[i] + rng.normal(0.0, self.cfg["dr_gyro_noise"] * s, 3)
-            counts = max(int(self.cfg["dr_servo_counts"]), 1)
-            position = (np.round(position * counts) / counts
-                        + rng.normal(0.0, self.cfg["dr_pos_noise"] * s, N_TENDON))
-            load = (load * self.load_scale[i]
-                    + rng.normal(0.0, self.cfg["dr_load_noise"] * s, N_TENDON))
+            sc, S = self.cfg["dr_scale"], self.n_servo
+            z = np.array(noise)
+            acc = acc + self.acc_bias[idx] + self.cfg["dr_acc_noise"] * sc * z[:, 0:3]
+            gyro = gyro + self.gyro_bias[idx] + self.cfg["dr_gyro_noise"] * sc * z[:, 3:6]
+            position = position + self.cfg["dr_pos_noise"] * sc * z[:, 6:6 + S]
+            load = (load * self.load_scale[idx][:, self.first_cable]
+                    + self.cfg["dr_load_noise"] * sc * z[:, 6 + S:6 + 2 * S])
+        if self.servo_counts is not None:            # the encoder reads whole counts
+            position = np.round(position * self.servo_counts) / self.servo_counts
         # physical limits, same as the hardware controller must apply: a sensor
         # spike (impact, glitch) can never feed the policy an extreme value
         position = np.clip(position, 0.0, 1.0)
@@ -436,48 +530,66 @@ class SingleLegRigEnv:
         acc = np.clip(acc, -self.cfg["acc_clip"], self.cfg["acc_clip"])
         gyro = np.clip(gyro / self.cfg["gyro_scale"], -2.0, 2.0)   # ±2 × gyro_scale rad/s
         return np.concatenate([
-            np.array([
-                self.cmd[i] / max(self.cfg["obs_cmd_scale"], 1e-3),   # target velocity
-                math.sin(2 * math.pi * phase),
-                math.cos(2 * math.pi * phase),
-            ]),
-            self.prev_action[i],      # previous action (policy output)
+            self._cmd_phase(idx),     # target velocity, phase sin/cos
+            self.prev_action[idx],    # previous action (policy output)
             target,                   # last servo targets sent
             position,                 # servo encoder positions
-            load,                     # servo loads
+            *([load] if self.cfg["servo_load_obs"] else []),   # servo loads (not on PWM servos)
             acc,                      # rail IMU accelerometer, in g
             gyro,                     # rail IMU gyro
-        ])
+        ], axis=1)
+
+    def _cmd_phase(self, idx: np.ndarray) -> np.ndarray:
+        """(len(idx), 3): target velocity (scaled), sin and cos of the phase."""
+        out = np.empty((len(idx), 3))
+        scale = max(self.cfg["obs_cmd_scale"], 1e-3)
+        for j, i in enumerate(idx):
+            phase = self._phase(i)
+            out[j] = (self.cmd[i] / scale, math.sin(2 * math.pi * phase), math.cos(2 * math.pi * phase))
+        return out
 
     def _push_obs(self, i: int, fresh: bool = False) -> None:
         """Advance env i's history and refresh its actor and critic observations."""
-        frame = self._hw_frame(i)
-        if fresh:
-            self.hist[i] = frame                        # reset: fill history with this step
-        else:
-            self.hist[i, :-1] = self.hist[i, 1:]        # oldest first, newest last
-            self.hist[i, -1] = frame
-        full = self._obs_full(i)
-        self.critic_obs[i] = self._obs_critic(i, full)
-        self.obs[i] = (self.hist[i].reshape(-1) if self.cfg["obs_mode"] == "hardware"
-                       else full)
+        self._push_obs_many(np.array([i]), [self._obs_noise(i)], fresh)
 
-    def _obs_critic(self, i: int, full: np.ndarray | None = None) -> np.ndarray:
+    def _push_obs_many(self, idx: np.ndarray, noise: list, fresh: bool = False) -> None:
+        """Advance the history of envs ``idx`` and refresh their observations.
+        ``noise``: one ``_obs_noise`` draw per env (None entries without DR)."""
+        frame = self._hw_frames(idx, noise)
+        if fresh:
+            self.hist[idx] = frame[:, None, :]          # reset: fill history with this step
+        else:
+            self.hist[idx, :-1] = self.hist[idx, 1:]    # oldest first, newest last
+            self.hist[idx, -1] = frame
+        full = self._obs_full_many(idx)
+        self.critic_obs[idx] = self._obs_critic_many(idx, full)
+        self.obs[idx] = (self.hist[idx].reshape(len(idx), -1) if self.cfg["obs_mode"] == "hardware"
+                         else full)
+
+    def _obs_critic(self, i: int) -> np.ndarray:
+        return self._obs_critic_many(np.array([i]), self._obs_full_many(np.array([i])))[0]
+
+    def _obs_full(self, i: int) -> np.ndarray:
+        return self._obs_full_many(np.array([i]))[0]
+
+    def _obs_critic_many(self, idx: np.ndarray, full: np.ndarray) -> np.ndarray:
         """Critic input: full sim state (115) + scored speed (1, optional) + randomized values (13, optional).
 
         The scored speed is the carriage speed the reward's velocity terms use
         (the ~1 s average under reward v4), which the instantaneous state lacks.
         """
-        full = self._obs_full(i) if full is None else full
+        parts = [full]
         if self.cfg["critic_scored_speed"]:
-            scored = self.vx_avg[i] / max(self.cfg["obs_cmd_scale"], 1e-3)
-            full = np.concatenate([full, [scored]])
-        if not self.cfg["critic_dr_params"]:
-            return full
-        p = self.dr_params(i)
-        p["delay_ms"] /= 20.0                    # roughly 0..1 like the others
-        p["rail_height_mm"] /= 10.0
-        return np.concatenate([full, np.fromiter(p.values(), dtype=np.float64)])
+            parts.append((self.vx_avg[idx] / max(self.cfg["obs_cmd_scale"], 1e-3))[:, None])
+        if self.cfg["critic_dr_params"]:
+            rows = []
+            for i in idx:
+                p = self.dr_params(i)
+                p["delay_ms"] /= 20.0                # roughly 0..1 like the others
+                p["rail_height_mm"] /= 10.0
+                rows.append(np.fromiter(p.values(), dtype=np.float64))
+            parts.append(np.array(rows))
+        return np.concatenate(parts, axis=1)
 
     def _obs_td(self) -> TensorDict:
         self.obs = np.nan_to_num(self.obs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -486,31 +598,29 @@ class SingleLegRigEnv:
                            "critic": torch.from_numpy(self.critic_obs)},
                           batch_size=[self.num_envs])
 
-    def _obs_full(self, i: int) -> np.ndarray:
-        """Full 115-value simulator state (critic, or actor with obs_mode='full')."""
-        d = self.datas[i]
-        quat = np.stack([d.qpos[a:a + 4] for a in self.ball_qadr])
-        rotvec = _quat_to_rotvec(quat).reshape(-1)
-        qvel_ball = np.concatenate([d.qvel[a:a + 3] for a in self.ball_dadr])
-        ten = (self.l0 - d.ten_length) / self.stroke
-        force = -d.actuator_force / self.fmax
-        ctrl = (self.l0 - d.ctrl) / self.stroke
-        phase = self._phase(i)
+    def _obs_full_many(self, idx: np.ndarray) -> np.ndarray:
+        """Full 115-value simulator state for envs ``idx`` (critic, or actor with obs_mode='full')."""
+        datas = [self.datas[i] for i in idx]
+        qpos = np.array([d.qpos for d in datas])
+        qvel = np.array([d.qvel for d in datas])
+        quat = qpos[:, self.ball_qadr[:, None] + np.arange(4)]            # (k, 13, 4)
+        rotvec = _quat_to_rotvec(quat).reshape(len(idx), -1)
+        qvel_ball = qvel[:, self.ball_dadr[:, None] + np.arange(3)].reshape(len(idx), -1)
+        ten = (self.l0 - np.array([d.ten_length for d in datas])) / self.stroke
+        force = -np.array([d.actuator_force for d in datas]) / self.fmax
+        ctrl = (self.l0 - np.array([d.ctrl for d in datas])) / self.stroke
+        cp = self._cmd_phase(idx)
         return np.concatenate([
-            np.array([
-                d.qpos[self.slide_qadr] / self.cfg["rail_half"],
-                d.qvel[0] / 0.20,
-                self.cmd[i] / max(self.cfg["obs_cmd_scale"], 1e-3),
-                math.sin(2 * math.pi * phase),
-                math.cos(2 * math.pi * phase),
-            ]),
+            (qpos[:, self.slide_qadr] / self.cfg["rail_half"])[:, None],
+            (qvel[:, 0] / 0.20)[:, None],
+            cp,
             rotvec,
             qvel_ball * 0.05,
             np.clip(ten, -0.5, 1.5),
             np.clip(force, 0.0, 1.5),
             np.clip(ctrl, 0.0, 1.0),
-            self.prev_action[i],
-        ])
+            self.prev_action[idx],
+        ], axis=1)
 
     # ------------------------------------------------------------------ #
     def _draw(self, name: str, nominal: float = 1.0, size: int | None = None):
@@ -534,7 +644,7 @@ class SingleLegRigEnv:
         self.battery[i] = self._draw("battery")
         self.sag[i] = self._draw("sag", 0.0)
         self.delay[i] = int(round(float(self._draw("delay", 0.0))))
-        self.strength[i] = self._draw("servo_strength", 1.0, N_TENDON)
+        self.strength[i] = np.atleast_1d(self._draw("servo_strength", 1.0, self.n_servo))[self.servo_of]
         c = self.cfg["dr_servo_calib"] * self.cfg["dr_scale"]
         if "servo_calib" in self.cfg["dr_override"]:
             self.calib[i] = float(self.cfg["dr_override"]["servo_calib"])
@@ -546,7 +656,7 @@ class SingleLegRigEnv:
             s = self.cfg["dr_scale"]
             self.acc_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_acc_bias"] * s
             self.gyro_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_gyro_bias"] * s
-            self.load_scale[i] = self._draw("load_scale", 1.0, N_TENDON)
+            self.load_scale[i] = np.atleast_1d(self._draw("load_scale", 1.0, self.n_servo))[self.servo_of]
         self.push_left[i] = 0
         self.volt[i] = self.battery[i]
         if not self.per_env_models:
@@ -773,47 +883,75 @@ class SingleLegRigEnv:
         wx, wy = s[self.foot_angvel_adr], s[self.foot_angvel_adr + 1]
         return fn, math.hypot(vx - r * wy, vy + r * wx)
 
-    def _phys_chunk(self, idxs: np.ndarray, cmd_buf: np.ndarray, push: np.ndarray) -> None:
+    def _step_chunk(self, idxs: np.ndarray) -> None:
+        """One physics substep for some envs.  Only C code runs here, so the
+        threads really run in parallel (mj_step releases Python's lock)."""
+        models, datas = self.models, self.datas
+        for i in idxs:
+            mujoco.mj_step(models[i], datas[i])
+
+    def _physics(self, cmd_buf: np.ndarray, push: np.ndarray) -> None:
+        """n_substeps of physics for every env: servo model, then mj_step.
+
+        The servo model (voltage sag, control delay, top speed) runs once per
+        substep for all envs as array maths; only mj_step runs on the threads.
+        (Running the per-env Python on the threads made them queue on Python's
+        lock: 3 threads were no faster than 1.)
+        """
+        n, datas, models = self.num_envs, self.datas, self.models
         speed = self.cfg["servo_speed"]
         step_dl = speed * self.m.opt.timestep if speed > 0 else np.inf
         fmax_nom = self.nom["actuator_forcerange"][:, 0]          # negative (pull)
         track_foot = self.cfg["impact_weight"] != 0.0 or self.cfg["slip_weight"] != 0.0
-        for i in idxs:
-            d, mi = self.datas[i], self.models[i]
-            # physical setpoints: what was commanded, shifted by calibration error
-            sent = cmd_buf[i] + self.calib[i]        # [this step, 1 ago, 2 ago]
-            delay = int(self.delay[i])
-            d.xfrc_applied[self.slider_body, 0] = push[i]
-            # per-substep peaks for the reward (tension shock/limit, foot impact, slip)
-            peak = np.full(N_TENDON, -np.inf)
-            f_peak, slip_sum, slip_n = 0.0, 0.0, 0
-            for k in range(self.n_substeps):
-                volt = 1.0
-                if self.per_env_models:
-                    # voltage sag: lower battery and heavy total load make every
-                    # servo weaker and slower
-                    load = float(np.mean(np.clip(-d.actuator_force / self.fmax, 0.0, 1.0)))
-                    volt = self.battery[i] * (1.0 - self.sag[i] * load)
-                    mi.actuator_forcerange[:, 0] = fmax_nom * self.strength[i] * volt
-                # control delay: a command sent at step t reaches the servo `delay`
-                # substeps later, so early substeps still chase older commands
-                lag = 0 if k >= delay else (delay - k + self.n_substeps - 1) // self.n_substeps
-                target = sent[min(lag, CMD_BUF - 1)]
-                max_dl = step_dl * volt
-                d.ctrl[:] += np.clip(target - d.ctrl, -max_dl, max_dl)  # top speed
-                mujoco.mj_step(mi, d)
-                np.maximum(peak, -d.actuator_force, out=peak)
-                if track_foot:
-                    fn, slip = self._foot_sensor(d)
-                    f_peak = max(f_peak, fn)
-                    if fn > 1e-6:
-                        slip_sum += slip
-                        slip_n += 1
-            self.volt[i] = volt
-            self.peak_tension[i] = peak
-            self.peak_foot_force[i] = f_peak
-            self.slip_sum[i] = slip_sum
-            self.slip_n[i] = slip_n
+        # physical setpoints: what was commanded, shifted by calibration error
+        sent = cmd_buf + self.calib[:, None, :]                   # (n, [now, 1 ago, 2 ago], tendon)
+        delay = self.delay.astype(np.int64)
+        rows = np.arange(n)
+        for i in range(n):
+            datas[i].xfrc_applied[self.slider_body, 0] = push[i]
+        # per-substep peaks for the reward (tension shock/limit, foot impact, slip)
+        peak = np.full((n, N_TENDON), -np.inf)
+        f_peak = np.zeros(n)
+        slip_sum = np.zeros(n)
+        slip_n = np.zeros(n, dtype=np.int32)
+        force = np.array([d.actuator_force for d in datas])
+        ctrl = np.array([d.ctrl for d in datas])
+        volt = np.ones(n)
+        r = self.foot_radius
+        fa, la, wa = self.foot_force_adr, self.foot_linvel_adr, self.foot_angvel_adr
+        for k in range(self.n_substeps):
+            if self.per_env_models:
+                # voltage sag: lower battery and heavy total load make every
+                # servo weaker and slower
+                load = np.mean(np.clip(-force / self.fmax, 0.0, 1.0), axis=1)
+                volt = self.battery * (1.0 - self.sag * load)
+                limit = fmax_nom[None, :] * self.strength * volt[:, None]
+                for i in range(n):
+                    models[i].actuator_forcerange[:, 0] = limit[i]
+            # control delay: a command sent at step t reaches the servo `delay`
+            # substeps later, so early substeps still chase older commands
+            lag = np.where(k >= delay, 0, (delay - k + self.n_substeps - 1) // self.n_substeps)
+            target = sent[rows, np.minimum(lag, CMD_BUF - 1)]
+            max_dl = (step_dl * volt)[:, None]
+            ctrl += np.clip(target - ctrl, -max_dl, max_dl)       # top speed
+            for i in range(n):
+                datas[i].ctrl[:] = ctrl[i]
+            list(self._pool.map(self._step_chunk, self._chunks))
+            force = np.array([d.actuator_force for d in datas])
+            np.maximum(peak, -force, out=peak)
+            if track_foot:
+                s = np.array([d.sensordata for d in datas])
+                fn = s[:, fa]
+                slip = np.hypot(s[:, la] - r * s[:, wa + 1], s[:, la + 1] + r * s[:, wa])
+                np.maximum(f_peak, fn, out=f_peak)
+                touch = fn > 1e-6
+                slip_sum += np.where(touch, slip, 0.0)
+                slip_n += touch
+        self.volt[:] = volt
+        self.peak_tension[:] = peak
+        self.peak_foot_force[:] = f_peak
+        self.slip_sum[:] = slip_sum
+        self.slip_n[:] = slip_n
 
     def step(self, actions, auto_reset: bool = True):
         action_raw = actions.detach().cpu().numpy() if hasattr(actions, "detach") else np.asarray(actions)
@@ -822,8 +960,9 @@ class SingleLegRigEnv:
         if action.shape != (self.num_envs, self.num_actions):
             raise ValueError(f"actions shape {action.shape}, expected {(self.num_envs, self.num_actions)}")
 
+        # each servo's action drives every cable on its spool
         target_pull = np.clip(
-            self.pull_bias + self.cfg["residual_scale"] * action, 0.0, 1.0)
+            self.pull_bias + self.cfg["residual_scale"] * action[:, self.servo_of], 0.0, 1.0)
         target_ctrl = self.l0[None, :] - self.stroke[None, :] * target_pull
         # controller-side smoothing of the sent target, then the servos chase it
         self.servo_cmd = np.clip(0.5 * self.servo_cmd + 0.5 * target_ctrl,
@@ -843,8 +982,7 @@ class SingleLegRigEnv:
         push = np.where(self.push_left > 0, self.push_force, 0.0)
         self.push_left = np.maximum(self.push_left - 1, 0)
 
-        list(self._pool.map(lambda idxs: self._phys_chunk(idxs, cmd_buf, push),
-                            self._chunks))
+        self._physics(cmd_buf, push)
 
         reward = np.zeros(self.num_envs, dtype=np.float32)
         done = np.zeros(self.num_envs, dtype=bool)
@@ -854,6 +992,7 @@ class SingleLegRigEnv:
         log: dict[str, np.ndarray] = {}
 
         self._k = self._curriculum()
+        noise = []
         for i in range(self.num_envs):
             self.t[i] += 1
             self._set_cmd(i)
@@ -868,9 +1007,10 @@ class SingleLegRigEnv:
             self.prev_action2[i] = self.prev_action[i]
             self.prev_action[i] = action[i]
             self.prev_tension[i] = -self.datas[i].actuator_force
-            self._push_obs(i)
-            final_obs[i] = self.obs[i]
-            final_critic[i] = self.critic_obs[i]
+            noise.append(self._obs_noise(i))        # random draws stay in env order
+        self._push_obs_many(np.arange(self.num_envs), noise)
+        final_obs[:] = self.obs
+        final_critic[:] = self.critic_obs
         self.env_steps += 1
 
         time_out = done & ~failed

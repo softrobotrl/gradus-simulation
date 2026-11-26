@@ -2,6 +2,14 @@
 
 Status: **implemented** in `rig_env.py` (`obs_mode="hardware"`, the default).
 
+**Hardware update (2026-11-25):** the servos are PWM servos with AS5600 magnetic encoders
+(4096 counts per revolution) read over a TCA9548A I2C mux.  PWM servos report **no load**, so
+row 6 is dropped by default (`servo_load_obs=False`): **33 values per step, 33 × 8 = 264**.
+Encoder positions are rounded to whole counts (`encoder_counts_per_rev`, `spool_radius`).
+Runs from before this change used the 41-value table below and still load as they were.
+**Pending:** the leg has 4 servos, each a double spool driving 2 tendons; the sim still has 8
+servos until the tendon pairing is confirmed.
+
 ## The state, per control step (every 20 ms)
 
 | # | name | count | what it is | units / scaling | where it comes from on hardware |
@@ -10,18 +18,18 @@ Status: **implemented** in `rig_env.py` (`obs_mode="hardware"`, the default).
 | 2 | phase (sin, cos) | 2 | how far we are into the current back-and-forth segment | sin/cos of 2π·(t / period) | computed from a clock (not measured) |
 | 3 | previous action | 8 | the raw policy output from the previous step | −1..1 | the policy's own last output (not measured) |
 | 4 | last servo targets | 8 | the position each servo was **told** to go to in the previous step | 0 = spool slack, 1 = full 31.4 mm pull | the value our controller sent (not measured) |
-| 5 | servo positions | 8 | where each servo spool **actually is** now | same 0..1 scale as #4 | servo encoders |
-| 6 | servo loads | 8 | how hard each servo is pulling on its tendon | fraction of max servo force (0..1.5) | servo load reading |
+| 5 | servo positions | 8 | where each servo spool **actually is** now | same 0..1 scale as #4, in whole encoder counts | AS5600 encoders |
+| 6 | servo loads | 8 | how hard each servo is pulling on its tendon (**only with `servo_load_obs`**; PWM servos have no load reading) | fraction of max servo force (0..1.5) | servo load reading |
 | 7 | rail IMU accelerometer | 3 | acceleration of the carriage (x, y, z) | g (reads ≈ 0, 0, 1 when still) | IMU on the rail carriage |
 | 8 | rail IMU gyro | 3 | angular rate of the carriage (x, y, z) | rad/s ÷ 4 (≈ 0 on a straight rail) | IMU on the rail carriage |
-| | **total** | **41** | | | |
+| | **total** | **33** (41 with loads) | | | |
 
 The values are stored in this order (rows 1 → 8) inside each step.
 
 ### History
 
 The policy sees the **last 8 steps** of this table stacked together, oldest first, so its input is
-**41 × 8 = 328 values** (0.16 s). History stacks the whole table, so it contains the last 8 sensor
+**33 × 8 = 264 values** (0.16 s; 328 with loads). History stacks the whole table, so it contains the last 8 sensor
 readings **and**, through row 3, the last 8 policy outputs. After a reset, all 8 slots are filled with
 the first step. Change the length with `--obs-history`.
 
@@ -61,7 +69,8 @@ Three different servo-related quantities appear in the state:
 
 #3 and #4 overlap (one is computed from the other). Both are kept on purpose; dropping #3 would
 lose little. #4 vs #5 is the useful comparison: a servo that stopped short of its target is held
-back by a loaded tendon, which #6 (load) confirms.
+back by a loaded tendon.  Without loads (PWM servos), that gap is the policy's only direct sign of
+cable tension.
 
 ## Removed from the old 115-value state
 
@@ -110,5 +119,5 @@ and old checkpoints. `evaluate.py` reads the mode from each run's `config.json`.
   action and last servo targets stay exact, since the controller knows them.
 - **Servo speed:** `servo_speed` is an assumed hobby-servo value; replace it with the datasheet
   speed once the servo is known.
-- **Load scaling:** the real servo's load reading must be calibrated to the same 0..1 fraction of
-  max force used here.
+- **Load scaling** (only if a servo with a load reading is used again): calibrate it to the same
+  0..1 fraction of max force used here.

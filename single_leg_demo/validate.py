@@ -13,7 +13,7 @@ import argparse
 import numpy as np
 import torch
 
-from single_leg_demo.rig_env import HW_FRAME, N_BALL, N_TENDON, RigConfig, SingleLegRigEnv
+from single_leg_demo.rig_env import N_BALL, N_TENDON, RigConfig, SingleLegRigEnv, hw_frame_size
 
 
 def main() -> None:
@@ -29,8 +29,9 @@ def main() -> None:
     print(f"* model: nq={env.nq} nv={env.nv} nu={env.nu} obs={env.num_obs} "
           f"({cfg.obs_mode}, {cfg.obs_history} steps) critic_obs={env.num_critic_obs} "
           f"actions={env.num_actions}")
-    assert env.num_critic_obs == 115 + 1 + 13, env.num_critic_obs   # sim state + scored speed + randomized values
-    assert env.num_obs == HW_FRAME * cfg.obs_history, env.num_obs
+    # sim state (115, with one previous action per servo) + scored speed + randomized values
+    assert env.num_critic_obs == 115 - N_TENDON + env.n_servo + 1 + 13, env.num_critic_obs
+    assert env.num_obs == hw_frame_size(cfg.servo_load_obs, env.n_servo) * cfg.obs_history, env.num_obs
     assert env.nu == N_TENDON
     assert len(env.ball_qadr) == N_BALL
 
@@ -51,7 +52,7 @@ def main() -> None:
 
     # Zero action must hold the reset pose.
     x0 = np.array([d.qpos[0] for d in env.datas])
-    obs, _, _, _ = env.step(torch.zeros(env.num_envs, N_TENDON))
+    obs, _, _, _ = env.step(torch.zeros(env.num_envs, env.num_actions))
     assert torch.isfinite(obs["policy"]).all()
     drift = np.abs(np.array([d.qpos[0] for d in env.datas]) - x0)
     print(f"* zero-action drift over one control step: {drift.max():.5f} m")
@@ -66,14 +67,11 @@ def main() -> None:
             env.cmd_period[i] = 1e6
             env._set_cmd(i)
         start = np.array([d.qpos[0] for d in env.datas])
-        # +X motion needs the foot to move -X, i.e. pull the back tendons.
-        action = torch.zeros(env.num_envs, N_TENDON)
-        action[:, 2] = 1.0
-        action[:, 6] = 1.0
-        if sign < 0:
-            action.zero_()
-            action[:, 0] = 1.0
-            action[:, 4] = 1.0
+        # +X motion needs the foot to move -X, i.e. pull the back (-X) tendons
+        # (tendon 2 = inner back, 6 = outer back; 0, 4 = front), through
+        # whichever servos drive them.
+        action = torch.zeros(env.num_envs, env.num_actions)
+        action[:, env.servo_of[[2, 6] if sign > 0 else [0, 4]]] = 1.0
         for _ in range(args.steps):
             obs, _, _, _ = env.step(action)
         dx = np.array([d.qpos[0] for d in env.datas]) - start

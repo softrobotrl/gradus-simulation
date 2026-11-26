@@ -33,12 +33,15 @@ from single_leg_demo.rig_env import FOOT_RADIUS, RigConfig, SingleLegRigEnv
 STILL = 0.01     # m/s
 
 
-def run(ckpt: Path, sign: float, cmd: float, period: float, steps: int, rail: float) -> dict:
+def run(ckpt: Path, sign: float, cmd: float, period: float, steps: int, rail: float,
+        dr_seed: int | None = None) -> dict:
     settings = saved_env_settings(ckpt)
     settings.update(rail_friction=rail, cmd_ramp=0.3)
     env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=steps, cmd_min=cmd,
                                     cmd_max=cmd, cmd_period=period, cmd_period_jitter=0.0,
-                                    cmd_resample=False, reset_noise=0.0, seed=5, **settings))
+                                    cmd_resample=False, reset_noise=0.0,
+                                    seed=5 if dr_seed is None else dr_seed,
+                                    dr_enabled=dr_seed is not None, **settings))
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             policy = load_policy(env, ckpt)
@@ -101,16 +104,20 @@ def main() -> None:
     p.add_argument("--period", type=float, default=4.0)
     p.add_argument("--steps", type=int, default=600)
     p.add_argument("--rail-friction", type=float, default=3.0)
+    p.add_argument("--dr", type=int, default=0, metavar="N",
+                   help="also run N randomized-physics episodes per direction (seeds 0..N-1); "
+                        "0 = nominal physics only")
     args = p.parse_args()
 
-    print(f"(rail {args.rail_friction} N, cmd {args.cmd} m/s, {args.period} s passes, "
+    print(f"({'randomized physics, ' + str(args.dr) + ' seeds; ' if args.dr else ''}rail {args.rail_friction} N, cmd {args.cmd} m/s, {args.period} s passes, "
           f"{args.steps * 0.02:.0f} s runs, both directions; means over passes)")
     print(f"{'checkpoint':40s} {'dist/asked':>12s} {'right way':>9s} {'still':>6s} {'wrong':>6s} "
           f"{'lifts/pass':>10s} {'failed':>8s} {'ran':>6s}")
     groups = [args.ckpts] if args.group else [[c] for c in args.ckpts]
     for group in groups:
-        res = [run(c, s, args.cmd, args.period, args.steps, args.rail_friction)
-               for c in group for s in (1.0, -1.0)]
+        seeds = list(range(args.dr)) if args.dr else [None]
+        res = [run(c, s, args.cmd, args.period, args.steps, args.rail_friction, k)
+               for c in group for s in (1.0, -1.0) for k in seeds]
         m = summarise(res)
         name = args.label or (f"{len(group)} checkpoints" if args.group
                               else f"{group[0].parent.name}/{group[0].name}")

@@ -74,4 +74,48 @@ class ScriptedGait:
             p = np.clip(0.7 * cur + 0.3 * hold, 0, 1)        # ease into the plant pose and wait
         else:
             p = self.pull(i, cmd, float(env.cmd_mag[i]), cur)
-        return np.clip((p - env.pull_bias[i]) / env.cfg["residual_scale"], -1, 1)
+        a = np.clip((p - env.pull_bias[i]) / env.cfg["residual_scale"], -1, 1)
+        if env.num_actions != len(a):        # fewer servos than tendons: average each spool's cables
+            a = np.array([a[env.servo_of == s].mean() for s in range(env.num_actions)])
+        return a
+
+
+class SagittalGait:
+    """Forward/back-only walk for the confirmed 4-servo leg (servo_layout="paired_x").
+
+    One sine per servo (inner +X, inner -X, outer +X, outer -X), found by a
+    random search over periodic patterns and checked on nominal physics
+    (2026-11-26, logs/reward_v2_study/hw_v2): about 0.048 m/s both ways on the
+    3 N rail, with about one foot lift per stride (1.22 Hz).  Open loop, so it
+    does not cope with randomized physics; it is a starting point to clone.
+
+    The pattern walks -X as found; a positive command swaps each ring's +X and
+    -X servos.  Beyond X_STOP in the direction of travel it holds still.
+    """
+
+    FREQ = 1.2156                                   # strides per second
+    AMP = np.array([0.984, 0.660, 0.987, 0.870])
+    OFF = np.array([0.468, -0.436, 0.260, -0.271])
+    PH = np.array([4.820, 2.284, 4.951, 3.857])
+    MIRROR = [1, 0, 3, 2]
+    X_STOP = 0.28
+
+    def __init__(self, n: int):
+        self.k = np.zeros(n, int)
+        self.jerky = False                          # interface parity with ScriptedGait
+
+    def reset(self, i: int) -> None:
+        self.k[i] = 0
+
+    def action(self, env, i: int) -> np.ndarray:
+        if env.num_actions != 4:
+            raise ValueError("SagittalGait needs the 4-servo leg (servo_layout='paired_x')")
+        cmd = float(env.cmd[i])
+        sgn = 1.0 if cmd >= 0 else -1.0
+        x = float(env.datas[i].qpos[env.slide_qadr])
+        t = self.k[i] * env.dt
+        self.k[i] += 1
+        if sgn * x > self.X_STOP:
+            return np.zeros(4)
+        a = np.clip(self.OFF + self.AMP * np.sin(2 * np.pi * self.FREQ * t + self.PH), -1, 1)
+        return a[self.MIRROR] if sgn > 0 else a

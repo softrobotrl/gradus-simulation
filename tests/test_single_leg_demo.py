@@ -9,7 +9,11 @@ import torch
 
 from onshape_to_mjcf.merge import _dir_of, _slug
 from single_leg_demo.rig_env import (
-    HW_FRAME, N_TENDON, SingleLegRigEnv, RigConfig, _bend_angle, _quat_to_rotvec)
+    HW_FRAME, N_TENDON, SingleLegRigEnv, RigConfig, _bend_angle, _quat_to_rotvec, hw_frame_size)
+
+# Most tests pin the 8-independent-servo rig (runs before 2026-11-26); the
+# confirmed 4 double-spool servo leg has its own tests below.
+LEGACY = dict(servo_layout="independent", servo_torque=0.0)
 
 RIG_XML = Path("urdf/gradus/demo/rig.xml")
 
@@ -53,12 +57,12 @@ class GeometryTests(unittest.TestCase):
 @unittest.skipUnless(RIG_XML.exists(), "run `python -m single_leg_demo.build_rig` first")
 class RigEnvTests(unittest.TestCase):
     def test_observation_and_actuation(self):
-        cfg = RigConfig(num_envs=2, num_threads=2, episode_steps=20,
+        cfg = RigConfig(**LEGACY, num_envs=2, num_threads=2, episode_steps=20,
                         reset_noise=0.0, cmd_min=0.1, cmd_max=0.1)
         env = SingleLegRigEnv(cfg)
         try:
             obs = env.reset()
-            self.assertEqual(obs["policy"].shape, (2, HW_FRAME * cfg.obs_history))
+            self.assertEqual(obs["policy"].shape, (2, hw_frame_size(cfg.servo_load_obs) * cfg.obs_history))
             self.assertEqual(obs["critic"].shape, (2, 115 + 1 + 13))   # state + scored speed + DR
             self.assertTrue(torch.isfinite(obs["policy"]).all())
             start = np.array([d.qpos[0] for d in env.datas])
@@ -74,11 +78,12 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_hardware_frame_layout_and_history(self):
-        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
-                        cmd_min=0.1, cmd_max=0.1, obs_history=3)
+        cfg = RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
+                        cmd_min=0.1, cmd_max=0.1, obs_history=3, servo_load_obs=True)
         env = SingleLegRigEnv(cfg)
         try:
             env.reset()
+            self.assertEqual(env.hw_frame, HW_FRAME)
             hist = env.hist[0]
             # fresh reset fills every history slot with the same step
             np.testing.assert_allclose(hist[0], hist[-1])
@@ -106,8 +111,48 @@ class RigEnvTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_confirmed_hardware_four_double_spool_pwm_servos(self):
+        # Confirmed leg (2026-11-25): 4 PWM servos (no load reading), each a
+        # double spool pulling the two cables of one ring on one side of the
+        # travel direction, AS5600 encoders at 4096 counts/rev on the spool.
+        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
+                        cmd_min=0.1, cmd_max=0.1, obs_history=1)
+        self.assertFalse(cfg.servo_load_obs)
+        env = SingleLegRigEnv(cfg)
+        try:
+            self.assertEqual(env.num_actions, 4)
+            self.assertEqual(env.hw_frame, 3 + 4 * 3 + 6)
+            self.assertEqual(list(np.bincount(env.servo_of)), [2, 2, 2, 2])
+            # both cables of a spool sit on the same side of the rail axis (x),
+            # on opposite sides of it sideways (y): their sideways pulls cancel
+            d = env.datas[0]
+            m = env.m
+            xy = np.array([d.site_xpos[m.wrap_objid[m.tendon_adr[int(m.actuator_trnid[a, 0])]]][:2]
+                           for a in range(m.nu)])
+            for s in range(4):
+                c = xy[env.servo_of == s]
+                self.assertEqual(np.sign(c[0, 0]), np.sign(c[1, 0]))
+                self.assertAlmostEqual(c[0, 1] + c[1, 1], 0.0, delta=1e-3)
+            np.testing.assert_allclose(env.fmax, 4.0 / 0.010 / 2)     # N per cable
+            np.testing.assert_allclose(env.encoder_counts, 2048, rtol=0.01)
+            env.reset()
+            env.step(torch.full((1, 4), 0.5), auto_reset=False)
+            frame = env.hist[0, -1]
+            np.testing.assert_allclose(frame[3:7], 0.5)            # previous action, per servo
+            position = frame[11:15]
+            counts = position * 2048
+            np.testing.assert_allclose(counts, np.round(counts), atol=0.05)
+            self.assertAlmostEqual(float(frame[15 + 2]), 1.0, delta=0.3)   # IMU z right after
+            # equal action -> both cables of a spool get the same pull target
+            pull = (env.l0 - env.servo_cmd[0]) / env.stroke
+            for s in range(4):
+                p = pull[env.servo_of == s]
+                self.assertAlmostEqual(p[0], p[1], delta=0.02)
+        finally:
+            env.close()
+
     def test_servo_speed_limit(self):
-        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0)
+        cfg = RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0)
         env = SingleLegRigEnv(cfg)
         try:
             env.reset()
@@ -125,7 +170,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_pull_bias_is_fixed(self):
-        cfg = RigConfig(num_envs=3, num_threads=1, episode_steps=20)
+        cfg = RigConfig(**LEGACY, num_envs=3, num_threads=1, episode_steps=20)
         env = SingleLegRigEnv(cfg)
         try:
             for _ in range(2):
@@ -135,7 +180,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_dr_off_shares_nominal_model(self):
-        env = SingleLegRigEnv(RigConfig(num_envs=2, num_threads=1, episode_steps=20))
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=2, num_threads=1, episode_steps=20))
         try:
             self.assertFalse(env.per_env_models)
             self.assertIs(env.models[0], env.models[1])
@@ -145,7 +190,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_dr_draws_differ_per_env_and_stay_in_range(self):
-        cfg = RigConfig(num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
+        cfg = RigConfig(**LEGACY, num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
         env = SingleLegRigEnv(cfg)
         try:
             params = [env.dr_params(i) for i in range(6)]
@@ -164,7 +209,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_dr_scale_zero_is_nominal(self):
-        env = SingleLegRigEnv(RigConfig(num_envs=2, num_threads=1, episode_steps=20,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=2, num_threads=1, episode_steps=20,
                                         dr_enabled=True, dr_scale=0.0))
         try:
             p = env.dr_params(1)
@@ -177,7 +222,7 @@ class RigEnvTests(unittest.TestCase):
     def test_full_control_delay_holds_previous_command(self):
         # a 10-substep (20 ms) delay: the first step after a new command
         # still chases the old one, so the servo setpoint does not move
-        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                         reset_noise=0.0, dr_override={"delay": 10}))
         try:
             env.reset()
@@ -190,7 +235,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_rail_height_randomized_within_range(self):
-        cfg = RigConfig(num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
+        cfg = RigConfig(**LEGACY, num_envs=6, num_threads=2, episode_steps=20, dr_enabled=True)
         env = SingleLegRigEnv(cfg)
         try:
             heights = [env.dr_params(i)["rail_height_mm"] for i in range(6)]
@@ -198,7 +243,7 @@ class RigEnvTests(unittest.TestCase):
             self.assertTrue(all(lo - 1e-9 <= h <= hi + 1e-9 for h in heights), heights)
             self.assertGreater(len(set(np.round(heights, 6))), 1)
             # a lower rail moves the hip (carriage) down by exactly that much
-            low = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+            low = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                             dr_override={"rail_height": -0.005}))
             try:
                 z = low.datas[0].xpos[low.slider_body, 2]
@@ -212,7 +257,7 @@ class RigEnvTests(unittest.TestCase):
     def test_delay_longer_than_one_step(self):
         # 30 ms = 15 substeps: nothing in step 1; in step 2 the first command
         # arrives after 5 substeps, so the servo moves for only 5 of 10
-        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                         reset_noise=0.0, dr_override={"delay": 15}))
         try:
             env.reset()
@@ -227,7 +272,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_voltage_sag_weakens_and_slows_servos(self):
-        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                         reset_noise=0.0,
                                         dr_override={"battery": 0.5, "sag": 0.0}))
         try:
@@ -242,7 +287,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_full_mode_matches_legacy_size(self):
-        cfg = RigConfig(num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
+        cfg = RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20, reset_noise=0.0,
                         obs_mode="full")
         env = SingleLegRigEnv(cfg)
         try:
@@ -255,7 +300,7 @@ class RigEnvTests(unittest.TestCase):
             env.close()
 
     def test_critic_sees_randomized_values(self):
-        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                         dr_override={"friction": 0.4, "battery": 0.8}))
         try:
             obs = env.reset()
@@ -263,7 +308,7 @@ class RigEnvTests(unittest.TestCase):
             names = list(env.dr_params(0))
             self.assertAlmostEqual(float(tail[names.index("friction")]), 0.4, places=5)
             self.assertAlmostEqual(float(tail[names.index("battery")]), 0.8, places=5)
-            off = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=20,
+            off = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=20,
                                             critic_dr_params=False))
             try:
                 self.assertEqual(off.num_critic_obs, 116)
@@ -275,7 +320,7 @@ class RigEnvTests(unittest.TestCase):
     def test_foot_sensors_match_contacts(self):
         # The reward reads the foot sensors by name; rig.xml has other sensors
         # (the rail IMU) first, so a fixed index would read the wrong values.
-        env = SingleLegRigEnv(RigConfig(num_envs=1, num_threads=1, episode_steps=200,
+        env = SingleLegRigEnv(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=200,
                                         reset_noise=0.0))
         try:
             env.reset()
@@ -301,7 +346,7 @@ class RigEnvTests(unittest.TestCase):
 class RewardModuleTests(unittest.TestCase):
     def test_presets_and_overrides(self):
         from single_leg_demo import rewards
-        cfg = rewards.apply_preset(RigConfig(), "v4")
+        cfg = rewards.apply_preset(RigConfig(**LEGACY), "v4")
         self.assertEqual((cfg.vel_avg_tau, cfg.vel_sigma, cfg.reward_preset), (1.0, 0.03, "v4"))
         rewards.apply_overrides(cfg, ["accel_weight=1.5", "bound_costs=false",
                                       "obs_history=4", "dr_friction=(0.3, 1.0)"])
@@ -310,15 +355,15 @@ class RewardModuleTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             rewards.apply_overrides(cfg, ["accel_wieght=1"])     # typo is an error, not a no-op
         for preset in rewards.PRESETS.values():                   # presets only touch real fields
-            self.assertTrue(set(preset) <= {f for f in vars(RigConfig())})
-        self.assertTrue(rewards.REWARD_FIELDS <= set(vars(RigConfig())))
+            self.assertTrue(set(preset) <= {f for f in vars(RigConfig(**LEGACY))})
+        self.assertTrue(rewards.REWARD_FIELDS <= set(vars(RigConfig(**LEGACY))))
 
 
 @unittest.skipUnless(RIG_XML.exists(), "build the rig first: python -m single_leg_demo.build_rig")
 class RewardBehaviourTests(unittest.TestCase):
     def test_logged_terms_add_up_to_the_reward(self):
         from single_leg_demo import rewards
-        cfg = rewards.apply_preset(RigConfig(num_envs=1, num_threads=1, episode_steps=100,
+        cfg = rewards.apply_preset(RigConfig(**LEGACY, num_envs=1, num_threads=1, episode_steps=100,
                                              bound_costs=False), "v4")
         env = SingleLegRigEnv(cfg)
         try:
