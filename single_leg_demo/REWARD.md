@@ -28,7 +28,7 @@ The reward runs only in training, so it may use simulator-only quantities (true
 carriage speed, foot contact force) that the real robot cannot measure.
 
 **Presets** `v1` to `v5` are named sets of weights (`PRESETS` in rewards.py),
-chosen with `train.py --reward`.  The default is `v4`.
+chosen with `train.py --reward`.  The default is `v5`.
 
 ## The current reward (v4)
 
@@ -59,7 +59,7 @@ The **scored speed** is the carriage speed averaged over about one stride
 (`vel_avg_tau` 1 s).  This is the key v4 change: one leg moves the carriage in
 pulses, and scoring the instantaneous speed ranked every gait below standing still.
 
-### v5 (experimental): v4 plus an idling cost
+### v5 (the default since 2026-11-24): v4 plus an idling cost
 
 | Term | Rewards or penalises | Weight field | v5 value |
 |---|---|---|---|

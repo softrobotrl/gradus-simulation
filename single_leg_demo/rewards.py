@@ -282,7 +282,7 @@ PRESETS: dict[str, dict] = {
     "v5": {"lat_free": 0.10, "foot_free": 0.03, "vel_avg_tau": 1.0, "vel_sigma": 0.03,
            "idle_weight": 1.0, "idle_tau": 0.5},
 }
-DEFAULT_PRESET = "v4"
+DEFAULT_PRESET = "v5"
 
 
 def apply_preset(cfg, name: str):

@@ -104,8 +104,8 @@ def main() -> None:
                    help="reward preset (rewards.py): v1 = the original reward; "
                         "v2 = ramped command + smoothness/damage costs with a curriculum; "
                         "v3 = v2 + free bands so the foot may lift and swing around the side; "
-                        "v4 = v3 + speed averaged over ~one stride (default); "
-                        "v5 = v4 + a cost for idling (bursts then pauses)")
+                        "v4 = v3 + speed averaged over ~one stride; "
+                        "v5 = v4 + a cost for idling (bursts then pauses) (default)")
     p.add_argument("--kl-clone", type=float, default=0.0, metavar="BETA",
                    help="with --resume from a clone (clone.py): add BETA * KL(clone || policy) "
                         "to the PPO loss so fine-tuning cannot drift far from the clone")

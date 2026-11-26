@@ -102,7 +102,7 @@ assumed hobby-servo 0.15 s / 60°, until the real servo is known).
 
 ## Reward
 
-There are four versions (presets), chosen with `--reward` (default `v4`).
+There are five versions (presets), chosen with `--reward` (default `v5`).
 Each one adds to the previous one.  `--reward v1` reproduces the original
 reward exactly.  The terms and presets live in [rewards.py](rewards.py); to
 change the reward, read [REWARD.md](REWARD.md) first.  It covers adding a
@@ -153,6 +153,13 @@ average is right.  Scored on instantaneous speed, the squared velocity term
 ranks every walking gait below standing still.  v4 also sets the speed tolerance
 (`vel_sigma`) to 0.03 m/s instead of the default 0.06, the value the v4
 tests used.
+
+**v5 charges for idling.**  The 1 s average lets a policy push hard and then
+stand still, and fine-tunes under v4 drifted into that.  v5 adds a cost for
+the shortfall of the speed averaged over 0.5 s from the command
+(`idle_weight` 1.0).  Fine-tuned from the clone, 3 seeds each, v5 kept the
+gait (still 31 % of each pass after 300 iterations, 1.16 of the asked
+distance) where v4 drifted to 36 % and 0.82.  Details in [REWARD.md](REWARD.md).
 
 Episodes end on a foot lift above 0.12 m, a ball-joint bend above 0.9 rad, a
 carriage position beyond 98 % of the rail, or NaN.  Timeouts bootstrap values

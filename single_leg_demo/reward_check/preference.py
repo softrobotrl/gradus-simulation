@@ -1,6 +1,6 @@
 """Preference test: score fixed behaviours under a reward, no training.
 
-    python -m single_leg_demo.reward_check.preference                    # the default reward (v4)
+    python -m single_leg_demo.reward_check.preference                    # the default reward (v5)
     python -m single_leg_demo.reward_check.preference --set accel_weight=1.0
     python -m single_leg_demo.reward_check.preference --compare v1 v4
 
