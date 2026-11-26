@@ -54,8 +54,33 @@ def saved_env_settings(ckpt: Path) -> dict:
     return settings
 
 
+class NumpyPolicy:
+    """A policy exported by train_mjx.py (policy.npz): input normalizer + MLP,
+    deterministic (the mean action).  No JAX needed."""
+
+    def __init__(self, path: Path, num_actions: int):
+        z = np.load(path)
+        self.mean, self.std = z["obs_mean"], z["obs_std"]
+        n = len([k for k in z.files if k.startswith("w")])
+        self.layers = [(z[f"w{i}"], z[f"b{i}"]) for i in range(n)]
+        self.act = str(z["activation"])
+        self.n = num_actions
+
+    def __call__(self, obs):
+        x = obs["policy"].numpy() if hasattr(obs, "keys") else np.asarray(obs)
+        x = (x - self.mean) / self.std
+        for i, (w, b) in enumerate(self.layers):
+            x = x @ w + b
+            if i < len(self.layers) - 1:
+                x = np.where(x > 0, x, np.expm1(np.minimum(x, 0))) if self.act == "elu" else np.maximum(x, 0)
+        return torch.from_numpy(x[..., :self.n].astype(np.float32))
+
+
 def load_policy(env: SingleLegRigEnv, ckpt: Path):
-    """Inference policy from a checkpoint; works with any env of the same shape."""
+    """Inference policy from a checkpoint (rsl-rl .pt, or a train_mjx policy.npz);
+    works with any env of the same shape."""
+    if Path(ckpt).suffix == ".npz":
+        return NumpyPolicy(Path(ckpt), env.num_actions)
     runner = OnPolicyRunner(env, training_config("eval", 24), None, device="cpu")
     runner.load(str(ckpt), map_location="cpu")
     return runner.get_inference_policy(device="cpu")
