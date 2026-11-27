@@ -7,7 +7,11 @@ Status: **implemented** in `rig_env.py` (`obs_mode="hardware"`, the default).
 row 6 is dropped by default (`servo_load_obs=False`): **33 values per step, 33 × 8 = 264**.
 Encoder positions are rounded to whole counts (`encoder_counts_per_rev`, `spool_radius`).
 Runs from before this change used the 41-value table below and still load as they were.
-**Pending:** the leg has 4 servos, each a double spool driving 2 tendons; the sim still has 8
+**Update 2026-11-26:** the rig has **no IMU**, so rows 7-8 are dropped by default
+(`imu_obs=False`), and the spool radius is 13.5 mm (`spool_radius`; 148 N per cable at the
+assumed 4 N·m).  With 4 servos the policy input is **15 values per step, 15 × 8 = 120**:
+command and phase (3), previous action (4), servo targets (4), encoder positions (4).
+**Done since:** the leg has 4 servos, each a double spool driving 2 tendons; the sim still has 8
 servos until the tendon pairing is confirmed.
 
 ## The state, per control step (every 20 ms)
