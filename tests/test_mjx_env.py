@@ -94,8 +94,9 @@ class MjxEnvTests(unittest.TestCase):
             st = step(st, jnp.asarray(a[0], dtype=jnp.float64))
             worst["qpos"] = max(worst["qpos"], float(np.max(np.abs(np.array(st.pipeline_state.qpos) - cpu.datas[0].qpos))))
             diff = np.abs(np.array(st.obs["state"]) - o["policy"][0].numpy()).reshape(-1, F)
-            worst["acc"] = max(worst["acc"], float(diff[:, acc].max()))
-            diff[:, acc] = 0.0
+            if cpu.cfg["imu_obs"]:
+                worst["acc"] = max(worst["acc"], float(diff[:, acc].max()))
+                diff[:, acc] = 0.0
             worst["obs"] = max(worst["obs"], float(diff.max()))
             worst["critic"] = max(worst["critic"], float(np.max(np.abs(np.array(st.obs["privileged_state"]) - o["critic"][0].numpy()))))
             worst["reward"] = max(worst["reward"], abs(float(st.reward) - float(r[0])))

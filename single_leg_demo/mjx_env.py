@@ -208,7 +208,9 @@ class MjxRigEnv(Env):
         parts = [head, s["prev_action"], target, position]
         if c["servo_load_obs"]:
             parts.append(load)
-        return jnp.concatenate(parts + [acc, gyro])
+        if c.get("imu_obs", True):          # no IMU on the confirmed rig (2026-11-26)
+            parts += [acc, gyro]
+        return jnp.concatenate(parts)
 
     def _critic(self, d, s: dict, mf: dict) -> jnp.ndarray:
         k, c = self.k, self.c_
