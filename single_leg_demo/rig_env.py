@@ -51,11 +51,11 @@ FOOT_RADIUS = rewards.FOOT_RADIUS
 HW_FRAME = 1 + 2 + 4 * N_TENDON + 3 + 3   # 41 values per hardware step with servo loads
 
 
-def hw_frame_size(servo_load_obs: bool, n_servo: int = N_TENDON) -> int:
+def hw_frame_size(servo_load_obs: bool, n_servo: int = N_TENDON, imu_obs: bool = True) -> int:
     """Values per hardware observation step (see STATES.md): command and
     phase (3), then per servo: previous action, target sent, encoder position
-    (and load), then the rail IMU (6)."""
-    return 3 + n_servo * (4 if servo_load_obs else 3) + 6
+    (and load), then the rail IMU (6, only with imu_obs)."""
+    return 3 + n_servo * (4 if servo_load_obs else 3) + (6 if imu_obs else 0)
 
 
 SERVO_LAYOUTS = ("independent", "paired_x")
@@ -124,7 +124,10 @@ class RigConfig:
     # position reading is rounded to whole counts (always, not only with DR).
     # 0 = no rounding (runs before 2026-11-26).
     encoder_counts_per_rev: int = 4096
-    spool_radius: float = 0.010       # m; cable pulled per radian of spool turn
+    spool_radius: float = 0.0135      # m; cable pulled per radian of spool turn (13.5 mm, 2026-11-26)
+    # The confirmed rig has no IMU (2026-11-26): the actor gets no rail IMU.
+    # True = the 6 IMU values of earlier runs.
+    imu_obs: bool = False
     obs_history: int = 8             # hardware steps stacked for the actor
     gyro_scale: float = 4.0          # rad/s normaliser for the rail IMU gyro (clipped at ±2)
     acc_clip: float = 3.0            # g, rail IMU accelerometer clip
@@ -431,7 +434,7 @@ class SingleLegRigEnv:
                              self.encoder_counts if self.n_servo == N_TENDON else
                              (self.encoder_counts[self.cable_pairs[:, 0]]
                               + self.encoder_counts[self.cable_pairs[:, 1]]) / 2)
-        self.hw_frame = hw_frame_size(cfg.servo_load_obs, self.n_servo)
+        self.hw_frame = hw_frame_size(cfg.servo_load_obs, self.n_servo, cfg.imu_obs)
         self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), self.hw_frame))
         self.num_critic_obs = int(self._obs_critic(0).shape[0])
         self.num_obs = (self.hw_frame * self.hist.shape[1] if cfg.obs_mode == "hardware"
@@ -535,8 +538,7 @@ class SingleLegRigEnv:
             target,                   # last servo targets sent
             position,                 # servo encoder positions
             *([load] if self.cfg["servo_load_obs"] else []),   # servo loads (not on PWM servos)
-            acc,                      # rail IMU accelerometer, in g
-            gyro,                     # rail IMU gyro
+            *([acc, gyro] if self.cfg["imu_obs"] else []),   # rail IMU (none on the confirmed rig)
         ], axis=1)
 
     def _cmd_phase(self, idx: np.ndarray) -> np.ndarray:

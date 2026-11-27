@@ -31,20 +31,21 @@ def main() -> None:
           f"actions={env.num_actions}")
     # sim state (115, with one previous action per servo) + scored speed + randomized values
     assert env.num_critic_obs == 115 - N_TENDON + env.n_servo + 1 + 13, env.num_critic_obs
-    assert env.num_obs == hw_frame_size(cfg.servo_load_obs, env.n_servo) * cfg.obs_history, env.num_obs
+    assert env.num_obs == hw_frame_size(cfg.servo_load_obs, env.n_servo, cfg.imu_obs) * cfg.obs_history, env.num_obs
     assert env.nu == N_TENDON
     assert len(env.ball_qadr) == N_BALL
 
     obs = env.reset()
     assert torch.isfinite(obs["policy"]).all()
     assert torch.isfinite(obs["critic"]).all()
-    frame = env.hist[0, -1]
-    acc, gyro = frame[-6:-3], frame[-3:]
-    print(f"* rail IMU after reset: acc={np.round(acc, 3)} g  gyro={np.round(gyro, 3)}")
-    # Z reads gravity and Y is held by the rail; X is the real carriage
-    # acceleration (the leg is still settling 40 ms after reset).
-    tol = 0.1 if args.dr else 0.05            # IMU bias + noise under randomization
-    assert abs(acc[2] - 1.0) < tol and abs(acc[1]) < tol, acc
+    if cfg.imu_obs:
+        frame = env.hist[0, -1]
+        acc, gyro = frame[-6:-3], frame[-3:]
+        print(f"* rail IMU after reset: acc={np.round(acc, 3)} g  gyro={np.round(gyro, 3)}")
+        # Z reads gravity and Y is held by the rail; X is the real carriage
+        # acceleration (the leg is still settling 40 ms after reset).
+        tol = 0.1 if args.dr else 0.05            # IMU bias + noise under randomization
+        assert abs(acc[2] - 1.0) < tol and abs(acc[1]) < tol, acc
     if args.dr:
         for i in range(env.num_envs):
             p = env.dr_params(i)

@@ -31,14 +31,15 @@ def saved_env_settings(ckpt: Path) -> dict:
     critic; no cmd_ramp -> step command (before reward v2); no rail_friction ->
     the value in rig.xml; no servo_load_obs -> loads in the actor input (before
     the PWM servos were confirmed); no encoder_counts_per_rev -> no rounding;
-    no servo_layout -> 8 independent servos at rig.xml's force limit.
+    no servo_layout -> 8 independent servos at rig.xml's force limit; no
+    imu_obs -> rail IMU in the actor input (before the no-IMU rig, 2026-11-26).
     """
     settings = {
         "obs_cmd_scale": 0.16, "obs_mode": "full", "obs_history": 1,
         "servo_speed": 0.0, "fixed_pull_bias": False, "critic_dr_params": False,
         "critic_scored_speed": False, "cmd_ramp": 0.0, "rail_friction": -1.0,
         "servo_load_obs": True, "encoder_counts_per_rev": 0, "spool_radius": 0.010,
-        "servo_layout": "independent", "servo_torque": 0.0,
+        "servo_layout": "independent", "servo_torque": 0.0, "imu_obs": True,
     }
     train_cfg = ckpt.parent / "config.json"
     if train_cfg.exists():
@@ -48,7 +49,7 @@ def saved_env_settings(ckpt: Path) -> dict:
         for key in ("obs_mode", "obs_history", "servo_speed", "fixed_pull_bias",
                     "critic_dr_params", "critic_scored_speed", "cmd_ramp", "rail_friction",
                     "servo_load_obs", "encoder_counts_per_rev", "spool_radius",
-                    "servo_layout", "servo_torque"):
+                    "servo_layout", "servo_torque", "imu_obs"):
             if key in saved:
                 settings[key] = type(settings[key])(saved[key])
     return settings

@@ -13,7 +13,7 @@ from single_leg_demo.rig_env import (
 
 # Most tests pin the 8-independent-servo rig (runs before 2026-11-26); the
 # confirmed 4 double-spool servo leg has its own tests below.
-LEGACY = dict(servo_layout="independent", servo_torque=0.0)
+LEGACY = dict(servo_layout="independent", servo_torque=0.0, imu_obs=True, spool_radius=0.010)
 
 RIG_XML = Path("urdf/gradus/demo/rig.xml")
 
@@ -121,7 +121,7 @@ class RigEnvTests(unittest.TestCase):
         env = SingleLegRigEnv(cfg)
         try:
             self.assertEqual(env.num_actions, 4)
-            self.assertEqual(env.hw_frame, 3 + 4 * 3 + 6)
+            self.assertEqual(env.hw_frame, 3 + 4 * 3)              # no IMU on the confirmed rig
             self.assertEqual(list(np.bincount(env.servo_of)), [2, 2, 2, 2])
             # both cables of a spool sit on the same side of the rail axis (x),
             # on opposite sides of it sideways (y): their sideways pulls cancel
@@ -133,16 +133,17 @@ class RigEnvTests(unittest.TestCase):
                 c = xy[env.servo_of == s]
                 self.assertEqual(np.sign(c[0, 0]), np.sign(c[1, 0]))
                 self.assertAlmostEqual(c[0, 1] + c[1, 1], 0.0, delta=1e-3)
-            np.testing.assert_allclose(env.fmax, 4.0 / 0.010 / 2)     # N per cable
-            np.testing.assert_allclose(env.encoder_counts, 2048, rtol=0.01)
+            np.testing.assert_allclose(env.fmax, 4.0 / 0.0135 / 2)    # N per cable, 13.5 mm spool
+            # 4096 counts/rev over the 31.4 mm stroke on a 13.5 mm spool
+            np.testing.assert_allclose(env.encoder_counts, 4096 * 0.0314159 / (2 * np.pi * 0.0135), rtol=0.01)
             env.reset()
             env.step(torch.full((1, 4), 0.5), auto_reset=False)
             frame = env.hist[0, -1]
             np.testing.assert_allclose(frame[3:7], 0.5)            # previous action, per servo
             position = frame[11:15]
-            counts = position * 2048
-            np.testing.assert_allclose(counts, np.round(counts), atol=0.05)
-            self.assertAlmostEqual(float(frame[15 + 2]), 1.0, delta=0.3)   # IMU z right after
+            counts = position * env.servo_counts
+            np.testing.assert_allclose(counts, np.round(counts), atol=1e-6)
+            self.assertEqual(len(frame), 15)                          # positions are the last values
             # equal action -> both cables of a spool get the same pull target
             pull = (env.l0 - env.servo_cmd[0]) / env.stroke
             for s in range(4):
