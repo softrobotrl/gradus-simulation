@@ -39,7 +39,7 @@ def saved_env_settings(ckpt: Path) -> dict:
         "servo_speed": 0.0, "fixed_pull_bias": False, "critic_dr_params": False,
         "critic_scored_speed": False, "cmd_ramp": 0.0, "rail_friction": -1.0,
         "servo_load_obs": True, "encoder_counts_per_rev": 0, "spool_radius": 0.010,
-        "servo_layout": "independent", "servo_torque": 0.0, "imu_obs": True,
+        "servo_layout": "independent", "servo_torque": 0.0, "imu_obs": True, "leg_yaw_deg": 0.0,
     }
     train_cfg = ckpt.parent / "config.json"
     if train_cfg.exists():
@@ -49,7 +49,7 @@ def saved_env_settings(ckpt: Path) -> dict:
         for key in ("obs_mode", "obs_history", "servo_speed", "fixed_pull_bias",
                     "critic_dr_params", "critic_scored_speed", "cmd_ramp", "rail_friction",
                     "servo_load_obs", "encoder_counts_per_rev", "spool_radius",
-                    "servo_layout", "servo_torque", "imu_obs"):
+                    "servo_layout", "servo_torque", "imu_obs", "leg_yaw_deg"):
             if key in saved:
                 settings[key] = type(settings[key])(saved[key])
     return settings

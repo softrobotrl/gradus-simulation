@@ -58,7 +58,7 @@ def hw_frame_size(servo_load_obs: bool, n_servo: int = N_TENDON, imu_obs: bool =
     return 3 + n_servo * (4 if servo_load_obs else 3) + (6 if imu_obs else 0)
 
 
-SERVO_LAYOUTS = ("independent", "paired_x")
+SERVO_LAYOUTS = ("independent", "paired_x", "single_x")
 
 
 def servo_groups(m, layout: str) -> np.ndarray:
@@ -70,21 +70,38 @@ def servo_groups(m, layout: str) -> np.ndarray:
     The holes sit at 45 degrees to the rail, so the two cables' sideways pulls
     cancel: the leg bends forward and back only.  Servo order: inner +X,
     inner -X, outer +X, outer -X.
+    ``single_x``: cable holes aligned with the rail (use with leg_yaw_deg=45
+    on this CAD).  4 servos, each pulling the one cable straight ahead of
+    (+X) or behind (-X) the backbone on one ring; the sideways cables get no
+    servo (-1 here; the env gives them zero force, as if absent).  Same servo
+    order as paired_x.
     """
     if layout == "independent":
         return np.arange(m.nu)
-    if layout != "paired_x":
+    if layout not in SERVO_LAYOUTS:
         raise ValueError(f"servo_layout must be one of {SERVO_LAYOUTS}, got {layout!r}")
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
-    groups = np.zeros(m.nu, dtype=int)
+    # hole positions at the hip, relative to the centre of their ring
+    hole = {}
     for a in range(m.nu):
         t = int(m.actuator_trnid[a, 0])
-        x = float(d.site_xpos[m.wrap_objid[m.tendon_adr[t]]][0] - d.site_xpos[m.site("tip").id][0])
-        ring = 0 if "inner" in m.tendon(t).name else 1
-        groups[a] = 2 * ring + (0 if x > 0 else 1)
-    if sorted(np.bincount(groups, minlength=4)) != [2, 2, 2, 2]:
-        raise RuntimeError(f"paired_x expects 2 cables per servo, got {groups}")
+        hole[a] = d.site_xpos[m.wrap_objid[m.tendon_adr[t]]][:2].copy()
+    ring_of = {a: 0 if "inner" in m.tendon(int(m.actuator_trnid[a, 0])).name else 1 for a in range(m.nu)}
+    centre = {r: np.mean([hole[a] for a in hole if ring_of[a] == r], axis=0) for r in (0, 1)}
+    groups = np.zeros(m.nu, dtype=int)
+    for a in range(m.nu):
+        ring = ring_of[a]
+        x, y = hole[a] - centre[ring]
+        side = 2 * ring + (0 if x > 0 else 1)
+        if layout == "paired_x":
+            groups[a] = side
+        else:
+            groups[a] = side if abs(x) > 2 * abs(y) else -1     # on the rail axis, or sideways
+    want = [2, 2, 2, 2] if layout == "paired_x" else [1, 1, 1, 1]
+    if sorted(np.bincount(groups[groups >= 0], minlength=4)) != want:
+        raise RuntimeError(f"{layout} expects {want[0]} cable(s) per servo, got {groups} "
+                           "(for single_x, are the holes aligned with the rail? see leg_yaw_deg)")
     return groups
 GRAVITY = 9.81
 CMD_BUF = 3          # sent commands kept for the control delay (max 2 steps = 40 ms)
@@ -120,6 +137,10 @@ class RigConfig:
     # 4.0 assumes about half the rating is usable, and gives 200 N per cable,
     # the value in rig.xml.  0 = keep rig.xml's limit.
     servo_torque: float = 4.0
+    # Turn the leg about the vertical axis relative to the rail (degrees).
+    # 0 = as in the CAD: cable holes at 45 degrees to the rail (paired_x).
+    # 45 = holes straight ahead, behind and to the sides (single_x).
+    leg_yaw_deg: float = 0.0
     # AS5600 magnetic encoder on the spool: 4096 counts per revolution.  The
     # position reading is rounded to whole counts (always, not only with DR).
     # 0 = no rounding (runs before 2026-11-26).
@@ -275,7 +296,7 @@ def _bend_angle(q: np.ndarray) -> np.ndarray:
     return 2.0 * np.arccos(np.clip(np.abs(q[..., 0]), 0.0, 1.0))
 
 
-def _load_with_foot_sensors(path: str) -> mujoco.MjModel:
+def _load_with_foot_sensors(path: str, leg_yaw_deg: float = 0.0) -> mujoco.MjModel:
     """Load the rig and add foot sensors for the reward (they do not change the physics).
 
     These are simulator-only (the reward runs in training only; the real leg has
@@ -288,6 +309,21 @@ def _load_with_foot_sensors(path: str) -> mujoco.MjModel:
     """
     spec = mujoco.MjSpec.from_file(path)
     plain = mujoco.MjModel.from_xml_path(path)
+    if leg_yaw_deg:
+        # turn the whole leg (hip mount and everything below it, with its cable
+        # holes) about the vertical axis, relative to the carriage and rail
+        slider = plain.body("slider").id
+        hip = [b for b in range(plain.nbody) if plain.body_parentid[b] == slider]
+        if len(hip) != 1:
+            raise RuntimeError(f"expected one leg body under the carriage, got {hip}")
+        b = spec.body(plain.body(hip[0]).name)
+        h = math.radians(leg_yaw_deg) / 2
+        qz = np.array([math.cos(h), 0.0, 0.0, math.sin(h)])
+        q0 = np.array(b.quat, dtype=float)
+        w1, x1, y1, z1 = qz
+        w2, x2, y2, z2 = q0
+        b.quat = [w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2, w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                  w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2]
     foot = plain.geom("foot")
     body = spec.body(plain.body(int(foot.bodyid[0])).name)
     pos = [float(v) for v in foot.pos]
@@ -312,7 +348,7 @@ class SingleLegRigEnv:
         self.dt = cfg.control_dt
         self.rng = np.random.default_rng(cfg.seed)
 
-        m = _load_with_foot_sensors(cfg.model_path)
+        m = _load_with_foot_sensors(cfg.model_path, cfg.leg_yaw_deg)
         if cfg.rail_friction >= 0.0:
             m.dof_frictionloss[m.jnt_dofadr[m.joint("slide").id]] = cfg.rail_friction
         self.m = m
@@ -320,20 +356,29 @@ class SingleLegRigEnv:
         if self.nu != N_TENDON:
             raise RuntimeError(f"expected {N_TENDON} tendon actuators, model has {self.nu}")
         # servo of each tendon actuator; the policy drives servos, not tendons
+        # (-1 = a cable with no servo: single_x's sideways cables)
         self.servo_of = servo_groups(m, cfg.servo_layout)
         self.n_servo = int(self.servo_of.max()) + 1
         self.num_actions = self.n_servo
-        self.cables_per_servo = np.bincount(self.servo_of)[self.servo_of]
+        unused = self.servo_of < 0
+        # servo index per tendon for indexing per-servo arrays padded with one
+        # extra entry (action 0, strength 1) for cables without a servo
+        self.servo_idx = np.where(unused, self.n_servo, self.servo_of)
+        counts = np.bincount(self.servo_of[~unused], minlength=self.n_servo)
+        self.cables_per_servo = np.where(unused, 1, counts[self.servo_idx % max(self.n_servo, 1)])
         self.first_cable = np.array([np.flatnonzero(self.servo_of == s)[0] for s in range(self.n_servo)])
-        # the two cables of each double spool (paired layouts only)
-        self.cable_pairs = (np.array([np.flatnonzero(self.servo_of == s) for s in range(self.n_servo)])
-                            if self.n_servo != N_TENDON else None)
+        # the cables of each servo's spool, (n_servo, cables per servo); None when 1 servo per tendon
+        self.servo_cables = (np.array([np.flatnonzero(self.servo_of == s) for s in range(self.n_servo)])
+                             if cfg.servo_layout != "independent" else None)
         if cfg.servo_torque > 0:
             m.actuator_forcerange[:, 0] = -cfg.servo_torque / cfg.spool_radius / self.cables_per_servo
+        elif unused.any():
+            raise ValueError("servo_layout single_x needs servo_torque > 0")
 
         self.l0 = m.actuator_ctrlrange[:, 1].copy()
         self.stroke = (m.actuator_ctrlrange[:, 1] - m.actuator_ctrlrange[:, 0]).copy()
-        self.fmax = (-m.actuator_forcerange[:, 0]).copy()
+        self.fmax = (-m.actuator_forcerange[:, 0]).copy()   # unused cables keep a nominal scale
+        m.actuator_forcerange[unused] = 0.0                  # cables without a servo pull nothing
         self.ctrl_lo = self.l0 - self.stroke
 
         self.slide_joint = m.joint("slide")
@@ -431,9 +476,8 @@ class SingleLegRigEnv:
                                if cfg.encoder_counts_per_rev > 0 else None)
         # encoder counts over the stroke, per servo (both cables of a spool share it)
         self.servo_counts = (None if self.encoder_counts is None else
-                             self.encoder_counts if self.n_servo == N_TENDON else
-                             (self.encoder_counts[self.cable_pairs[:, 0]]
-                              + self.encoder_counts[self.cable_pairs[:, 1]]) / 2)
+                             self.encoder_counts if self.servo_cables is None else
+                             self.encoder_counts[self.servo_cables].mean(axis=1))
         self.hw_frame = hw_frame_size(cfg.servo_load_obs, self.n_servo, cfg.imu_obs)
         self.hist = np.zeros((cfg.num_envs, max(1, cfg.obs_history), self.hw_frame))
         self.num_critic_obs = int(self._obs_critic(0).shape[0])
@@ -507,13 +551,13 @@ class SingleLegRigEnv:
         # encoder reads in the robot's own (possibly mis-calibrated) zero
         position = np.minimum(taut, setpoint) + self.calib[idx] / self.stroke
         load = -force / self.fmax
-        if self.n_servo != N_TENDON:
+        if self.servo_cables is not None:
             # one spool per servo: the tauter cable holds it back, the encoder
-            # reads the spool; the servo carries both cables' tension
-            a, b = self.cable_pairs[:, 0], self.cable_pairs[:, 1]
-            target = (target[:, a] + target[:, b]) / 2
-            position = np.minimum(position[:, a], position[:, b])
-            load = (load[:, a] + load[:, b]) / 2
+            # reads the spool; the servo carries all its cables' tension
+            sc = self.servo_cables
+            target = target[:, sc].mean(axis=2)
+            position = position[:, sc].min(axis=2)
+            load = load[:, sc].mean(axis=2)
         acc = sens[:, self.imu_acc_adr:self.imu_acc_adr + 3] / GRAVITY
         gyro = sens[:, self.imu_gyro_adr:self.imu_gyro_adr + 3].copy()
         if self.cfg["dr_enabled"]:                   # sensor noise, policy input only
@@ -646,7 +690,7 @@ class SingleLegRigEnv:
         self.battery[i] = self._draw("battery")
         self.sag[i] = self._draw("sag", 0.0)
         self.delay[i] = int(round(float(self._draw("delay", 0.0))))
-        self.strength[i] = np.atleast_1d(self._draw("servo_strength", 1.0, self.n_servo))[self.servo_of]
+        self.strength[i] = np.append(np.atleast_1d(self._draw("servo_strength", 1.0, self.n_servo)), 1.0)[self.servo_idx]
         c = self.cfg["dr_servo_calib"] * self.cfg["dr_scale"]
         if "servo_calib" in self.cfg["dr_override"]:
             self.calib[i] = float(self.cfg["dr_override"]["servo_calib"])
@@ -658,7 +702,7 @@ class SingleLegRigEnv:
             s = self.cfg["dr_scale"]
             self.acc_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_acc_bias"] * s
             self.gyro_bias[i] = self.rng.uniform(-1, 1, 3) * self.cfg["dr_gyro_bias"] * s
-            self.load_scale[i] = np.atleast_1d(self._draw("load_scale", 1.0, self.n_servo))[self.servo_of]
+            self.load_scale[i] = np.append(np.atleast_1d(self._draw("load_scale", 1.0, self.n_servo)), 1.0)[self.servo_idx]
         self.push_left[i] = 0
         self.volt[i] = self.battery[i]
         if not self.per_env_models:
@@ -719,7 +763,11 @@ class SingleLegRigEnv:
         if randomize and self.rng.random() < 0.5:
             bend = -bend
         half = 0.5 * bend
-        bend_q = np.array([math.cos(half), 0.0, math.sin(half), 0.0])
+        # bend in the rail's plane (about the world y axis), whichever way the
+        # leg is turned (leg_yaw_deg); the joint frames turn with the leg
+        yaw = math.radians(self.cfg["leg_yaw_deg"])
+        bend_q = np.array([math.cos(half), math.sin(half) * math.sin(yaw),
+                           math.sin(half) * math.cos(yaw), 0.0])
         for adr in self.ball_qadr:
             d.qpos[adr:adr + 4] = bend_q
 
@@ -964,7 +1012,8 @@ class SingleLegRigEnv:
 
         # each servo's action drives every cable on its spool
         target_pull = np.clip(
-            self.pull_bias + self.cfg["residual_scale"] * action[:, self.servo_of], 0.0, 1.0)
+            self.pull_bias + self.cfg["residual_scale"]
+            * np.concatenate([action, np.zeros((len(action), 1))], axis=1)[:, self.servo_idx], 0.0, 1.0)
         target_ctrl = self.l0[None, :] - self.stroke[None, :] * target_pull
         # controller-side smoothing of the sent target, then the servos chase it
         self.servo_cmd = np.clip(0.5 * self.servo_cmd + 0.5 * target_ctrl,

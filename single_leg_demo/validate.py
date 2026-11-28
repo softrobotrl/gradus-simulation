@@ -72,7 +72,10 @@ def main() -> None:
         # (tendon 2 = inner back, 6 = outer back; 0, 4 = front), through
         # whichever servos drive them.
         action = torch.zeros(env.num_envs, env.num_actions)
-        action[:, env.servo_of[[2, 6] if sign > 0 else [0, 4]]] = 1.0
+        if env.servo_cables is not None:                  # servos: inner +X, inner -X, outer +X, outer -X
+            action[:, [1, 3] if sign > 0 else [0, 2]] = 1.0
+        else:
+            action[:, [2, 6] if sign > 0 else [0, 4]] = 1.0
         for _ in range(args.steps):
             obs, _, _, _ = env.step(action)
         dx = np.array([d.qpos[0] for d in env.datas]) - start
