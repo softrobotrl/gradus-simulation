@@ -81,8 +81,14 @@ class MjxEnvTests(unittest.TestCase):
         return cpu, env, st
 
     def test_steps_match_cpu_env(self):
+        self._match()
+
+    def test_steps_match_cpu_env_aligned_leg(self):
+        self._match(servo_layout="single_x", leg_yaw_deg=45.0)
+
+    def _match(self, **over):
         jax.config.update("jax_enable_x64", True)
-        cpu, env, st = self._pair()
+        cpu, env, st = self._pair(**over)
         step = jax.jit(env.step)
         rng = np.random.default_rng(3)
         worst = {"qpos": 0.0, "obs": 0.0, "acc": 0.0, "critic": 0.0, "reward": 0.0}

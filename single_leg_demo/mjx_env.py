@@ -69,8 +69,8 @@ class Consts:
     stroke: np.ndarray
     fmax: np.ndarray
     ctrl_lo: np.ndarray
-    servo_of: np.ndarray
-    cable_pairs: np.ndarray | None
+    servo_idx: np.ndarray            # servo per tendon; n_servo = no servo (padded action 0)
+    servo_cables: np.ndarray | None  # (n_servo, cables per servo)
     first_cable: np.ndarray
     servo_counts: np.ndarray | None
     fmax_nom: np.ndarray
@@ -97,7 +97,7 @@ class Consts:
     def from_env(env: SingleLegRigEnv) -> "Consts":
         return Consts(
             l0=env.l0, stroke=env.stroke, fmax=env.fmax, ctrl_lo=env.ctrl_lo,
-            servo_of=env.servo_of, cable_pairs=env.cable_pairs, first_cable=env.first_cable,
+            servo_idx=env.servo_idx, servo_cables=env.servo_cables, first_cable=env.first_cable,
             servo_counts=env.servo_counts, fmax_nom=env.nom["actuator_forcerange"][:, 0].copy(),
             nom={k: v.copy() for k, v in env.nom.items()}, n_servo=env.n_servo,
             slide_qadr=env.slide_qadr, ball_qadr=env.ball_qadr, ball_dadr=env.ball_dadr,
@@ -182,11 +182,11 @@ class MjxRigEnv(Env):
         taut = (k.l0 - d.ten_length) / k.stroke
         position = jnp.minimum(taut, setpoint) + s["calib"] / k.stroke
         load = -d.actuator_force / k.fmax
-        if k.cable_pairs is not None:
-            a, b = k.cable_pairs[:, 0], k.cable_pairs[:, 1]
-            target = (target[a] + target[b]) / 2
-            position = jnp.minimum(position[a], position[b])
-            load = (load[a] + load[b]) / 2
+        if k.servo_cables is not None:
+            sc = k.servo_cables
+            target = target[sc].mean(axis=1)
+            position = position[sc].min(axis=1)
+            load = load[sc].mean(axis=1)
         acc = d.sensordata[k.imu_acc_adr:k.imu_acc_adr + 3] / GRAVITY
         gyro = d.sensordata[k.imu_gyro_adr:k.imu_gyro_adr + 3]
         if c["dr_enabled"]:
@@ -292,7 +292,8 @@ class MjxRigEnv(Env):
         s["key"] = key
         action_raw = action
         action = jnp.clip(action, -1.0, 1.0)
-        target_pull = jnp.clip(s["pull_bias"] + c["residual_scale"] * action[k.servo_of], 0.0, 1.0)
+        padded = jnp.concatenate([action, jnp.zeros((1,), action.dtype)])   # cables without a servo: 0
+        target_pull = jnp.clip(s["pull_bias"] + c["residual_scale"] * padded[k.servo_idx], 0.0, 1.0)
         target_ctrl = k.l0 - k.stroke * target_pull
         s["servo_cmd"] = jnp.clip(0.5 * s["servo_cmd"] + 0.5 * target_ctrl, k.ctrl_lo, k.l0)
         s["cmd_buf"] = jnp.roll(s["cmd_buf"], 1, axis=0).at[0].set(s["servo_cmd"])
